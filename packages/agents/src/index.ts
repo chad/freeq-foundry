@@ -5,6 +5,13 @@
  * agents — which are what make a run provable without model spend.
  */
 export {
+  ModelAgent,
+  PERSONAS,
+  modelAgent,
+  type ModelAgentOptions,
+} from "./model-agent.js";
+
+export {
   DeterministicAgent,
   builderAgent,
   institutionalistAgent,

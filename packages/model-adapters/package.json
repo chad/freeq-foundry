@@ -1,7 +1,7 @@
 {
-  "name": "@freeq-foundry/agents",
+  "name": "@freeq-foundry/model-adapters",
   "version": "0.1.0",
-  "description": "Agent runtime, action space, and deterministic agent archetypes",
+  "description": "Provider-neutral model adapters, structured parsing, failover, and replay",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
@@ -24,8 +24,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@freeq-foundry/model-adapters": "workspace:*",
-    "@freeq-foundry/projections": "workspace:*",
     "@freeq-foundry/protocol": "workspace:*"
   },
   "devDependencies": {

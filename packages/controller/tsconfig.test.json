@@ -43,6 +43,9 @@
     },
     {
       "path": "../evaluation"
+    },
+    {
+      "path": "../model-adapters"
     }
   ],
   "include": [

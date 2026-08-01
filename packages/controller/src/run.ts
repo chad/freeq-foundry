@@ -69,6 +69,13 @@ import {
   validateProposal,
 } from "@freeq-foundry/governance";
 import { invocationCost, type ActionRequest, type AgentAdapter, type AgentView } from "@freeq-foundry/agents";
+import {
+  InvocationRecorder,
+  hashRequest,
+  microsToUsdString,
+  type RecordedInvocation,
+  type RouteOutcome,
+} from "@freeq-foundry/model-adapters";
 import { Repository, type MergePolicy } from "@freeq-foundry/repository";
 import { NodeSubprocessSandbox, type Sandbox } from "@freeq-foundry/sandbox";
 import {
@@ -118,6 +125,15 @@ export interface ParticipantSpec {
   readonly keyPair: KeyPair;
   readonly adapter: AgentAdapter;
   /**
+   * Hook the adapter uses to report model invocations.
+   *
+   * Set by the controller before the run begins, so a model-backed agent's calls are
+   * recorded as events with snapshot pins and charged against the treasury (ADR-0009).
+   */
+  readonly attachInvocationSink?: (
+    sink: (outcome: RouteOutcome, promptTokensEstimate: number) => void,
+  ) => void;
+  /**
    * Human root this participant's lineage terminates in.
    *
    * The controller issues the credential chain, so this is the *scenario's* claim
@@ -166,6 +182,14 @@ export interface RunResult {
   readonly repository: Repository;
   /** Signed evaluator verdicts, in order. */
   readonly evaluations: readonly Awaited<ReturnType<typeof evaluateRelease>>[];
+  /**
+   * Every model call, sufficient to replay the run without a provider.
+   *
+   * §6.9 would otherwise fail for a model-driven run: the same prompt does not
+   * produce the same response, so replaying by re-calling a provider produces a
+   * different run.
+   */
+  readonly modelInvocations: readonly RecordedInvocation[];
   readonly ticks: number;
   readonly terminationReason: RunTerminationReason;
   readonly validity: RunValidity;
@@ -300,6 +324,13 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
   );
   const sandbox = config.sandbox ?? new NodeSubprocessSandbox();
   const evaluations: Awaited<ReturnType<typeof evaluateRelease>>[] = [];
+  const invocations = new InvocationRecorder();
+  /** Queued invocation events, appended after the activation that produced them. */
+  const pendingInvocations: {
+    did: string;
+    outcome: RouteOutcome;
+    promptTokens: number;
+  }[] = [];
 
   // Genesis. The manifest hash goes inside the record, so a run's membership in a
   // confirmatory set is checkable rather than asserted (ADR-0009).
@@ -450,6 +481,14 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     });
   }
 
+  // Wire each model-backed agent's invocation reporting into the event log. Done
+  // once, before the loop, so an adapter cannot silently make uncharged calls.
+  for (const participant of config.participants) {
+    participant.attachInvocationSink?.((outcome, promptTokens) => {
+      pendingInvocations.push({ did: participant.keyPair.did, outcome, promptTokens });
+    });
+  }
+
   // ---- main loop ----
 
   const claimedWork = new Map<string, string>();
@@ -462,6 +501,8 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
   const reviewed = new Map<string, Set<string>>();
   /** Commits the evaluator has already rejected, so agents do not resubmit them. */
   const rejectedCommits = new Set<string>();
+  /** Channel messages, so agents can actually converse (§14). */
+  const recentMessages: { actorDid: string; channelId: string; text: string }[] = [];
   let tick = 0;
   let terminationReason: RunTerminationReason | undefined;
 
@@ -547,7 +588,15 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
         completedWork,
         horizonMs,
         enforceCapabilities,
-        { repository, mainBranch, pushedBranches, proposedBranches, reviewed, rejectedCommits },
+        {
+          repository,
+          mainBranch,
+          pushedBranches,
+          proposedBranches,
+          reviewed,
+          rejectedCommits,
+          recentMessages,
+        },
       );
 
       // Scarcity applies even to deterministic agents, or a deterministic arm
@@ -556,6 +605,69 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
       if (view.remainingCredits < cost.credits) continue;
 
       const requests = await participant.adapter.decide(view);
+
+      // Model invocations first: the spend must be recorded before the actions it
+      // paid for, or a run that terminates mid-activation under-reports cost.
+      while (pendingInvocations.length > 0) {
+        const pending = pendingInvocations.shift() as (typeof pendingInvocations)[number];
+        const { outcome } = pending;
+
+        if (outcome.response.ok) {
+          const record = invocations.record(
+            outcome.adapter,
+            {
+              messages: [],
+              maxOutputTokens: 0,
+            },
+            outcome.response,
+            outcome.costMicros,
+          );
+          await writer.append(pending.did, EventTypes.MODEL_INVOKED, {
+            invocationId: record.invocationId,
+            adapterId: outcome.adapter.id,
+            provider: outcome.adapter.provider,
+            modelIdentifier: outcome.adapter.modelIdentifier,
+            snapshotIdentifier: outcome.adapter.snapshotIdentifier,
+            apiVersion: outcome.adapter.apiVersion,
+            verificationLevel: outcome.adapter.verificationLevel,
+            inputTokens: outcome.response.usage.inputTokens,
+            outputTokens: outcome.response.usage.outputTokens,
+            // Recorded because a mismatch with the requested snapshot is silent
+            // endpoint substitution (ADR-0009).
+            ...(outcome.response.returnedModelIdentifier === undefined
+              ? {}
+              : { returnedModelIdentifier: outcome.response.returnedModelIdentifier }),
+            ...(outcome.failedOver.length === 0
+              ? {}
+              : { failedOver: outcome.failedOver.map((f) => f.adapterId) }),
+            status: "succeeded",
+          });
+          await writer.append(pending.did, EventTypes.SPEND_RECORDED, {
+            account: pending.did,
+            credits: 0,
+            usd: microsToUsdString(outcome.costMicros),
+            purpose: "production",
+          });
+        } else {
+          // A failed call still costs the activation and must be visible: §47.2
+          // wants provider failure survivable, not invisible.
+          await writer.append(pending.did, EventTypes.MODEL_INVOKED, {
+            invocationId: `mi-failed-${state.logicalTime}`,
+            adapterId: outcome.adapter.id,
+            provider: outcome.adapter.provider,
+            modelIdentifier: outcome.adapter.modelIdentifier,
+            snapshotIdentifier: outcome.adapter.snapshotIdentifier,
+            apiVersion: outcome.adapter.apiVersion,
+            verificationLevel: outcome.adapter.verificationLevel,
+            status: "failed",
+            failureKind: outcome.response.kind,
+            ...(outcome.failedOver.length === 0
+              ? {}
+              : { failedOver: outcome.failedOver.map((f) => f.adapterId) }),
+          });
+        }
+      }
+
       await writer.append(participant.keyPair.did, EventTypes.SPEND_RECORDED, {
         account: participant.keyPair.did,
         credits: cost.credits,
@@ -583,6 +695,7 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
           proposedBranches,
           reviewed,
           rejectedCommits,
+          recentMessages,
           evaluations,
           lineageOf: (did) =>
             projected.participants.byDid.get(did)?.lineagePseudonym ?? did,
@@ -624,6 +737,7 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     runId: config.runId,
     repository,
     evaluations,
+    modelInvocations: invocations.records,
     ticks: tick,
     terminationReason: finalReason,
     validity: final.run.validity,
@@ -768,6 +882,11 @@ function buildView(
     readonly proposedBranches: ReadonlySet<string>;
     readonly reviewed: ReadonlyMap<string, ReadonlySet<string>>;
     readonly rejectedCommits: ReadonlySet<string>;
+    readonly recentMessages: readonly {
+      readonly actorDid: string;
+      readonly channelId: string;
+      readonly text: string;
+    }[];
   },
 ): AgentView {
   const did = participant.keyPair.did;
@@ -789,9 +908,14 @@ function buildView(
     .filter((item) => !completedWork.has(item.workItemId))
     .map((item) => {
       const claimedBy = claimedWork.get(item.workItemId);
-      return claimedBy === undefined
-        ? { workItemId: item.workItemId }
-        : { workItemId: item.workItemId, claimedBy };
+      return {
+        workItemId: item.workItemId,
+        // A model-backed agent writes code from these; a deterministic one ignores
+        // them and the scenario's implementation is substituted.
+        description: item.description,
+        path: item.path,
+        ...(claimedBy === undefined ? {} : { claimedBy }),
+      };
     });
 
   return {
@@ -799,7 +923,7 @@ function buildView(
     logicalTime: state.logicalTime,
     runClockMs: elapsedRunClockMs(state.run),
     horizonMs,
-    recentMessages: [],
+    recentMessages: production.recentMessages,
     openProposals,
     myGrants: enforceCapabilities
       ? [...state.capabilities.grants.values()]
@@ -901,6 +1025,7 @@ interface ApplyContext {
   readonly proposedBranches: Set<string>;
   readonly reviewed: Map<string, Set<string>>;
   readonly rejectedCommits: Set<string>;
+  readonly recentMessages: { actorDid: string; channelId: string; text: string }[];
   readonly evaluations: Awaited<ReturnType<typeof evaluateRelease>>[];
   readonly lineageOf: (did: string) => string;
 }
@@ -952,6 +1077,14 @@ async function applyRequest(ctx: ApplyContext): Promise<boolean> {
         channelId: request.channelId,
         text: request.text,
       });
+      ctx.recentMessages.push({
+        actorDid: did,
+        channelId: request.channelId,
+        text: request.text,
+      });
+      // Bounded: the whole history would eventually exceed a model's context and
+      // the canonical payload ceiling.
+      if (ctx.recentMessages.length > 40) ctx.recentMessages.shift();
       return true;
 
     case "open_proposal": {
@@ -1162,6 +1295,17 @@ async function applyRequest(ctx: ApplyContext): Promise<boolean> {
       );
       if (item === undefined) return false;
 
+      // The agent's own changes take precedence. A deterministic agent supplies
+      // none, and the scenario's implementation is used instead — which is the
+      // difference between testing the production pipeline and testing code
+      // generation, and is recorded on the event so a reader can tell which
+      // happened.
+      const authored = request.changes.length > 0;
+      const changes = authored
+        ? request.changes.filter((change) => change.path.length > 0)
+        : [{ path: item.path, content: item.implementation }];
+      if (changes.length === 0) return false;
+
       // The grant actually being exercised is recorded on the commit, so the
       // §6.4 attribution chain reaches the code itself.
       const grant = [...state.capabilities.grants.values()].find(
@@ -1183,7 +1327,7 @@ async function applyRequest(ctx: ApplyContext): Promise<boolean> {
 
       const committed = ctx.repository.applyPatch({
         branch: request.branch,
-        patch: { changes: [{ path: item.path, content: item.implementation }] },
+        patch: { changes },
         message: request.message,
         provenance: {
           actorDid: did,
@@ -1207,9 +1351,12 @@ async function applyRequest(ctx: ApplyContext): Promise<boolean> {
       await writer.append(did, EventTypes.COMMIT_CREATED, {
         branch: request.branch,
         commitHash: committed.value.hash,
-        path: item.path,
+        paths: changes.map((change) => change.path),
         workItemId: request.workItemId,
         capabilityGrantId: grantId,
+        // False means the scenario supplied the code, not the agent. Recorded so a
+        // reader can never mistake a pipeline test for evidence of code generation.
+        agentAuthored: authored,
       });
 
       // CI: run the produced tree in the sandbox. A branch that does not even

@@ -17,10 +17,11 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@freeq-foundry/protocol": "workspace:*",
     "@freeq-foundry/agents": "workspace:*",
     "@freeq-foundry/controller": "workspace:*",
-    "@freeq-foundry/observability": "workspace:*"
+    "@freeq-foundry/model-adapters": "workspace:*",
+    "@freeq-foundry/observability": "workspace:*",
+    "@freeq-foundry/protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

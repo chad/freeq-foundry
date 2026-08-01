@@ -31,6 +31,7 @@
     "@freeq-foundry/gateway": "workspace:*",
     "@freeq-foundry/governance": "workspace:*",
     "@freeq-foundry/identity": "workspace:*",
+    "@freeq-foundry/model-adapters": "workspace:*",
     "@freeq-foundry/policy": "workspace:*",
     "@freeq-foundry/projections": "workspace:*",
     "@freeq-foundry/protocol": "workspace:*",

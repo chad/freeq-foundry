@@ -10,11 +10,11 @@
   },
   "packageManager": "pnpm@10.28.0",
   "scripts": {
-    "build": "tsc -b packages/protocol packages/identity packages/policy packages/projections packages/capabilities packages/governance packages/event-store packages/gateway packages/repository packages/sandbox packages/evaluation packages/agents packages/observability packages/controller apps/foundry",
+    "build": "tsc -b packages/protocol packages/identity packages/policy packages/projections packages/capabilities packages/governance packages/event-store packages/gateway packages/repository packages/sandbox packages/evaluation packages/model-adapters packages/agents packages/observability packages/controller apps/foundry",
     "typecheck": "pnpm run build && pnpm -r run typecheck",
     "test": "pnpm run build && pnpm -r run test",
     "verify": "pnpm run build && pnpm -r run typecheck && pnpm -r run test",
-    "clean": "tsc -b --clean packages/protocol packages/identity packages/policy packages/projections packages/capabilities packages/governance packages/event-store packages/gateway packages/repository packages/sandbox packages/evaluation packages/agents packages/observability packages/controller apps/foundry && pnpm -r exec rm -rf dist *.tsbuildinfo",
+    "clean": "tsc -b --clean packages/protocol packages/identity packages/policy packages/projections packages/capabilities packages/governance packages/event-store packages/gateway packages/repository packages/sandbox packages/evaluation packages/model-adapters packages/agents packages/observability packages/controller apps/foundry && pnpm -r exec rm -rf dist *.tsbuildinfo",
     "demo": "pnpm run build && node apps/foundry/dist/cli.js"
   },
   "devDependencies": {

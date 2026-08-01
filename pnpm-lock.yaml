@@ -30,6 +30,9 @@ importers:
       '@freeq-foundry/controller':
         specifier: workspace:*
         version: link:../../packages/controller
+      '@freeq-foundry/model-adapters':
+        specifier: workspace:*
+        version: link:../../packages/model-adapters
       '@freeq-foundry/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -49,6 +52,9 @@ importers:
 
   packages/agents:
     dependencies:
+      '@freeq-foundry/model-adapters':
+        specifier: workspace:*
+        version: link:../model-adapters
       '@freeq-foundry/projections':
         specifier: workspace:*
         version: link:../projections
@@ -111,6 +117,9 @@ importers:
       '@freeq-foundry/identity':
         specifier: workspace:*
         version: link:../identity
+      '@freeq-foundry/model-adapters':
+        specifier: workspace:*
+        version: link:../model-adapters
       '@freeq-foundry/policy':
         specifier: workspace:*
         version: link:../policy
@@ -217,6 +226,22 @@ importers:
         version: 3.2.7(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.1)
 
   packages/identity:
+    dependencies:
+      '@freeq-foundry/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.7(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.1)
+
+  packages/model-adapters:
     dependencies:
       '@freeq-foundry/protocol':
         specifier: workspace:*

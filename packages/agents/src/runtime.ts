@@ -48,11 +48,18 @@ export type ActionRequest =
     }
   | { readonly type: "claim_work"; readonly workItemId: string }
   | {
-      /** Commit an implementation for a claimed work item. */
+      /**
+       * Commit an implementation for a claimed work item.
+       *
+       * `changes` carries whole file contents, authored by the agent. A model-backed
+       * agent writes them; a deterministic agent copies them from the scenario, which
+       * is the difference between testing the pipeline and testing code generation.
+       */
       readonly type: "commit_work";
       readonly workItemId: string;
       readonly branch: string;
       readonly message: string;
+      readonly changes: readonly { readonly path: string; readonly content: string }[];
     }
   | { readonly type: "open_pull_request"; readonly branch: string; readonly title: string }
   | {
@@ -95,7 +102,14 @@ export interface AgentView {
    */
   readonly grantsByDid: ReadonlyMap<string, readonly string[]>;
   readonly constitutionRuleIds: readonly string[];
-  readonly openWorkItems: readonly { readonly workItemId: string; readonly claimedBy?: string }[];
+  readonly openWorkItems: readonly {
+    readonly workItemId: string;
+    readonly claimedBy?: string;
+    /** What is required. A model-backed agent writes code from this. */
+    readonly description?: string;
+    /** Where the implementation belongs. */
+    readonly path?: string;
+  }[];
   readonly remainingCredits: number;
   /** True once every mandatory work item is merged into the main branch. */
   readonly workComplete: boolean;
@@ -310,12 +324,16 @@ export function builderAgent(id: string, selfDid: string): DeterministicAgent {
       when: (view) => view.myUncommittedWork.length > 0,
       then: (view) => {
         const workItemId = view.myUncommittedWork[0] as string;
+        // A deterministic agent cannot author code, so it commits nothing and lets
+        // the controller supply the scenario's implementation. Passing an empty
+        // change set makes that substitution explicit rather than hidden.
         return [
           {
             type: "commit_work",
             workItemId,
             branch: `feature/${workItemId}`,
             message: `Implement ${workItemId}`,
+            changes: [],
           },
         ];
       },

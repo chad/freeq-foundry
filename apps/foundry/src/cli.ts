@@ -20,10 +20,21 @@ import {
   verifyChain,
 } from "@freeq-foundry/protocol";
 import {
+  PERSONAS,
   builderAgent,
   institutionalistAgent,
+  modelAgent,
   weakSaboteurAgent,
 } from "@freeq-foundry/agents";
+import {
+  FREE,
+  ModelRouter,
+  anthropicAdapter,
+  ollamaAdapter,
+  openAiAdapter,
+  pricingFor,
+  type ModelAdapter,
+} from "@freeq-foundry/model-adapters";
 import {
   executeRun,
   webhookScenario,
@@ -39,6 +50,9 @@ interface Options {
   readonly saboteur: boolean;
   readonly outDir: string;
   readonly quiet: boolean;
+  /** Provider to drive agents with. Absent means deterministic agents. */
+  readonly model?: string;
+  readonly snapshot?: string;
 }
 
 function parseArgs(argv: readonly string[]): Options {
@@ -55,6 +69,8 @@ function parseArgs(argv: readonly string[]): Options {
     saboteur: flags.get("saboteur") === "true",
     outDir: resolve(flags.get("out") ?? "out"),
     quiet: flags.get("quiet") === "true",
+    ...(flags.get("model") === undefined ? {} : { model: flags.get("model") as string }),
+    ...(flags.get("snapshot") === undefined ? {} : { snapshot: flags.get("snapshot") as string }),
   };
 }
 
@@ -67,7 +83,57 @@ const scenario: Scenario = webhookScenario();
  * verified credential chain at admission. A scenario cannot claim a lineage it
  * cannot prove.
  */
-function population(withSaboteur: boolean): readonly ParticipantSpec[] {
+function population(
+  withSaboteur: boolean,
+  model?: { readonly provider: string; readonly snapshot: string },
+): readonly ParticipantSpec[] {
+  if (model !== undefined) return modelPopulation(model, withSaboteur);
+  return deterministicPopulation(withSaboteur);
+}
+
+/**
+ * A model-backed population.
+ *
+ * Same roster and same lineages as the deterministic one, so the two are comparable
+ * — §49.11 requires holding everything but the variable of interest constant.
+ */
+function modelPopulation(
+  model: { readonly provider: string; readonly snapshot: string },
+  withSaboteur: boolean,
+): readonly ParticipantSpec[] {
+  const pricing = pricingFor(model.provider);
+  const roster: readonly (readonly [string, string, string])[] = [
+    ["alice", "human-one", PERSONAS.BUILDER],
+    ["bob", "human-two", PERSONAS.INSTITUTIONALIST],
+    ["carol", "human-three", PERSONAS.STATUS_SEEKER],
+    ...(withSaboteur
+      ? [["mallory", "human-four", PERSONAS.SKEPTIC] as readonly [string, string, string]]
+      : []),
+  ];
+
+  return roster.map(([label, humanLabel, persona]) => {
+    const keyPair = deterministicKeyPair(label);
+    const adapter = providerAdapter(model.provider, model.snapshot);
+    const router = new ModelRouter({ targets: [{ adapter, pricing }] });
+    let sink: ((...args: never[]) => void) | undefined;
+    return {
+      keyPair,
+      adapter: modelAgent({
+        id: `${label}-model`,
+        router,
+        persona,
+        onInvocation: (outcome, tokens) => sink?.(outcome as never, tokens as never),
+      }),
+      humanRoot: deterministicKeyPair(humanLabel),
+      declaredAutonomy: "autonomous" as const,
+      attachInvocationSink: (given: (...args: never[]) => void) => {
+        sink = given;
+      },
+    };
+  });
+}
+
+function deterministicPopulation(withSaboteur: boolean): readonly ParticipantSpec[] {
   const alice = deterministicKeyPair("alice");
   const bob = deterministicKeyPair("bob");
   const carol = deterministicKeyPair("carol");
@@ -105,6 +171,39 @@ function population(withSaboteur: boolean): readonly ParticipantSpec[] {
   return base;
 }
 
+/**
+ * Build a provider adapter from a flag.
+ *
+ * Keys come from the environment, never from a flag: a key in argv ends up in shell
+ * history and in process listings.
+ */
+function providerAdapter(provider: string, snapshot: string): ModelAdapter {
+  switch (provider) {
+    case "anthropic":
+      return anthropicAdapter({
+        apiKey: requireKey("ANTHROPIC_API_KEY"),
+        snapshotIdentifier: snapshot,
+      });
+    case "openai":
+      return openAiAdapter({
+        apiKey: requireKey("OPENAI_API_KEY"),
+        snapshotIdentifier: snapshot,
+      });
+    case "ollama":
+      return ollamaAdapter({ snapshotIdentifier: snapshot });
+    default:
+      throw new Error(`unknown provider ${provider}; expected anthropic, openai, or ollama`);
+  }
+}
+
+function requireKey(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value === "") {
+    throw new Error(`${name} is not set`);
+  }
+  return value;
+}
+
 async function main(): Promise<number> {
   const options = parseArgs(process.argv.slice(2));
   const log = options.quiet ? () => undefined : (line: string) => console.log(line);
@@ -127,14 +226,25 @@ async function main(): Promise<number> {
   log(`  scenario   ${scenario.scenarioId}`);
   log(`  arm        ${options.arm}`);
   log(`  enforce    ${options.enforce ? "capability checks enforced" : "checks bypassed (Condition F)"}`);
-  log(`  population ${population(options.saboteur).length} deterministic agents`);
+  log(
+    `  agents     ${population(options.saboteur).length} ${
+      options.model === undefined
+        ? "deterministic (no model, no cost)"
+        : `model-backed via ${options.model}:${options.snapshot ?? "default"}`
+    }`,
+  );
   log("");
 
   const started = Date.now();
   const result = await executeRun({
     runId: options.runId,
     scenario,
-    participants: population(options.saboteur),
+    participants: population(
+      options.saboteur,
+      options.model === undefined
+        ? undefined
+        : { provider: options.model, snapshot: options.snapshot ?? "default" },
+    ),
     recorder,
     controller,
     evaluator,
@@ -234,6 +344,16 @@ async function main(): Promise<number> {
   log(`  wrote ${join(dir, "evaluations.json")}`);
   log(`  wrote ${join(dir, "commit-provenance.json")}`);
   log(`  wrote ${join(dir, "product")}/ (${mainFiles.size} files)`);
+
+  if (result.modelInvocations.length > 0) {
+    // The recording that makes a model-driven run replayable at zero cost (§6.9).
+    writeFileSync(
+      join(dir, "model-invocations.json"),
+      `${JSON.stringify(result.modelInvocations, null, 2)}\n`,
+      "utf8",
+    );
+    log(`  wrote ${join(dir, "model-invocations.json")} (${result.modelInvocations.length} calls)`);
+  }
 
   if (!verification.valid) {
     console.error("\nthe produced chain does not verify; this is a harness bug");

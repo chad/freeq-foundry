@@ -16,6 +16,9 @@
     },
     {
       "path": "../../packages/observability"
+    },
+    {
+      "path": "../../packages/model-adapters"
     }
   ],
   "include": [
