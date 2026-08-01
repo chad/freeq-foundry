@@ -226,12 +226,8 @@ export class CorporateAgent {
 
       const decision = await this.#think(messages);
       if (decision === undefined) {
+        // #think has already logged the concrete reason; just stand the agent down.
         bot.setState("degraded", "model unavailable");
-        this.#options.log.record(this.did, "safety.event", {
-          severity: "warning",
-          code: "MODEL_UNAVAILABLE",
-          description: `${this.spec.provider} unavailable or over budget; turn skipped`,
-        });
         return;
       }
 
@@ -265,7 +261,17 @@ export class CorporateAgent {
       temperature: this.spec.temperature,
     });
 
-    if (!outcome.response.ok) return undefined;
+    if (!outcome.response.ok) {
+      // The concrete reason goes in the log: a bad key and a rate limit look identical
+      // from the channel, and an invalid key once cost three agents two minutes of a
+      // live game before anyone noticed.
+      this.#options.log.record(this.did, "safety.event", {
+        severity: "warning",
+        code: "MODEL_UNAVAILABLE",
+        description: `${this.spec.provider}: ${outcome.response.message.slice(0, 300)}`,
+      });
+      return undefined;
+    }
     this.#spentMicros += outcome.costMicros;
 
     this.#options.log.record(this.did, "model.invoked", {

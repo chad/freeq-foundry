@@ -102,12 +102,14 @@ export function corporateRoster(): readonly AgentSpec[] {
       temperature: "0.2",
     }),
     spec({
+      // Was gemini-2.5-pro until the GOOGLE_API_KEY on this machine was rejected by
+      // Google; now shares gpt-4.1 with process — a third planned contrast pair.
       nick: "product",
-      provider: "google",
-      snapshot: "gemini-2.5-pro",
+      provider: "openai",
+      snapshot: "gpt-4.1-2025-04-14",
       persona: "product",
       tools: FULL_TOOLS,
-      blurb: "customer voice · wants CPO and product authority · gemini-2.5-pro",
+      blurb: "customer voice · wants CPO and product authority · gpt-4.1",
       temperature: "0.4",
     }),
     spec({
@@ -131,21 +133,24 @@ export function corporateRoster(): readonly AgentSpec[] {
       temperature: "0.3",
     }),
     spec({
+      // Was gemini-2.0-flash; gpt-4o-mini is the same fast-cheap tier.
       nick: "growth",
-      provider: "google",
-      snapshot: "gemini-2.0-flash",
+      provider: "openai",
+      snapshot: "gpt-4o-mini-2024-07-18",
       persona: "growth",
       tools: FULL_TOOLS,
-      blurb: "revenue hunter · wants CRO + success-tied comp · gemini-2.0-flash",
+      blurb: "revenue hunter · wants CRO + success-tied comp · gpt-4o-mini",
       temperature: "0.5",
     }),
     spec({
+      // Was gemini-2.5-flash; haiku keeps an engineer on a fast model and pairs with
+      // operator as a snapshot-matched contrast.
       nick: "architect",
-      provider: "google",
-      snapshot: "gemini-2.5-flash",
+      provider: "anthropic",
+      snapshot: "claude-haiku-4-5-20251001",
       persona: "architect",
       tools: ENGINEER_TOOLS,
-      blurb: "CTO contender · wants technical authority · gemini-2.5-flash",
+      blurb: "CTO contender · wants technical authority · haiku-4-5",
       temperature: "0.3",
     }),
     spec({

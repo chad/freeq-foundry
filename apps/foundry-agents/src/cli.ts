@@ -275,8 +275,9 @@ async function main(): Promise<number> {
       });
       agents.push(agent);
       console.log(`    ✓ ${spec.nick.padEnd(11)} ${agent.did}`);
-      // Polite to prod and to rate limits: stagger joins.
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 1200));
+      // Polite to prod and to rate limits: stagger joins. 1.2s proved too fast — the
+      // server dropped nine of twelve SASL handshakes on a restart.
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 3000));
     } catch (error) {
       console.error(`    ✗ ${spec.nick.padEnd(11)} ${String(error)}`);
     }
