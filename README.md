@@ -100,6 +100,8 @@ is authoritative; all queryable state is a projection of it. ([§32](docs/specif
   research protocol. Normative for anything presented as evidence.
 - **[docs/open-questions.md](docs/open-questions.md)** — disposition of the
   fifteen [§58](docs/specification.md#58-open-questions) open questions.
+- **[docs/status.md](docs/status.md)** — what works, what does not, and the honest
+  gaps. Read this before believing anything else.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — development setup and the rules that
   keep the protocol package trustworthy.
 
