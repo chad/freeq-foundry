@@ -1,0 +1,32 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": [
+      "node"
+    ]
+  },
+  "references": [
+    {
+      "path": "../protocol"
+    },
+    {
+      "path": "../gateway"
+    },
+    {
+      "path": "../event-store"
+    },
+    {
+      "path": "../policy"
+    },
+    {
+      "path": "../capabilities"
+    }
+  ],
+  "include": [
+    "src/**/*.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": []
+}

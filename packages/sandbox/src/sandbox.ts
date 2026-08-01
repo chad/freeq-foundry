@@ -270,13 +270,32 @@ export function scanForSecrets(
     { name: "slack token", regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
     { name: "generic api key assignment", regex: /(?:api[_-]?key|secret|password)\s*[:=]\s*['"][^'"]{12,}['"]/i },
     { name: "bearer token", regex: /\bBearer\s+[A-Za-z0-9._-]{20,}\b/ },
+    { name: "anthropic api key", regex: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/ },
+    { name: "openai api key", regex: /\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b/ },
+    // Commands that echo a secret to a terminal. I wrote one of these while
+    // checking whether a key was set, which put a live key into a transcript and
+    // shell history. Checking presence never requires printing the value.
+    //
+    // `:+` is exempt: it substitutes a fixed marker when the variable is set and
+    // never the value itself, which is the safe way to ask the question.
+    {
+      name: "credential echoed to output",
+      regex:
+        /(?:echo|printf|print)\b[^\n]*\$(?:\{[A-Z_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z_]*(?::-|\})|[A-Z_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z_]*\b)/,
+    },
+    {
+      name: "credential logged from the environment",
+      regex: /console\.log\([^)]*(?:process\.env|env)[^)]*(?:KEY|TOKEN|SECRET|PASSWORD)/i,
+    },
   ];
 
   const findings: { path: string; pattern: string }[] = [];
   for (const [path, content] of files) {
-    for (const { name, regex } of patterns) {
-      if (regex.test(content)) findings.push({ path, pattern: name });
-    }
+    const matched = patterns.filter(({ regex }) => regex.test(content));
+    if (matched.length === 0) continue;
+    // One finding per path, naming every pattern that matched. Repeating the path
+    // once per pattern turns one problem into several in a report.
+    findings.push({ path, pattern: matched.map(({ name }) => name).join(", ") });
   }
   return findings;
 }

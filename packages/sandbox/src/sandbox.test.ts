@@ -220,3 +220,32 @@ describe("secret scanning", () => {
     expect(findings.length).toBeGreaterThan(0);
   });
 });
+
+describe("secret scanning: patterns that leak a key without storing one", () => {
+  it("flags a command that echoes a credential environment variable", () => {
+    // The mistake I made: printing a value to check whether it was set. Presence can
+    // always be checked without disclosing the secret.
+    for (const line of [
+      'echo "ANTHROPIC_API_KEY set: ${ANTHROPIC_API_KEY:-no}"',
+      "console.log(process.env.OPENAI_API_KEY)",
+      'printf "%s" $GITHUB_TOKEN',
+    ]) {
+      expect(scanForSecrets(files({ "check.sh": line })).length, line).toBeGreaterThan(0);
+    }
+  });
+
+  it("does not flag a presence check that discloses nothing", () => {
+    const safe = 'echo "key set: ${ANTHROPIC_API_KEY:+yes}"';
+    expect(scanForSecrets(files({ "check.sh": safe }))).toEqual([]);
+  });
+
+  it("flags provider key shapes directly", () => {
+    const findings = scanForSecrets(
+      files({
+        "a.mjs": 'const k = "sk-ant-api03-' + "x".repeat(40) + '";',
+        "b.mjs": 'const k = "sk-proj-' + "y".repeat(40) + '";',
+      }),
+    );
+    expect(findings.map((f) => f.path).sort()).toEqual(["a.mjs", "b.mjs"]);
+  });
+});

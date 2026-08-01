@@ -19,6 +19,18 @@
     },
     {
       "path": "../../packages/model-adapters"
+    },
+    {
+      "path": "../../packages/server"
+    },
+    {
+      "path": "../../packages/event-store"
+    },
+    {
+      "path": "../../packages/gateway"
+    },
+    {
+      "path": "../../packages/identity"
     }
   ],
   "include": [

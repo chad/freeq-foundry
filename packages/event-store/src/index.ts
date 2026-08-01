@@ -19,4 +19,6 @@ export type {
 
 export { InMemoryEventStore, type InMemoryEventStoreOptions } from "./memory.js";
 
+export { SqliteEventStore, type SqliteEventStoreOptions } from "./sqlite.js";
+
 export { runEventStoreConformance, type EventStoreHarness } from "./conformance.js";

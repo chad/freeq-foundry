@@ -175,6 +175,21 @@ export interface RunConfig {
   readonly enforceCapabilities?: boolean;
   /** Override the sandbox, so a container-backed runner can be substituted (§31). */
   readonly sandbox?: Sandbox;
+  /**
+   * Hard ceiling on real model spend, in micro-USD.
+   *
+   * §6.7: not amendable by governance. The run terminates on reaching it rather than
+   * exceeding it, because a ceiling that is discovered after the fact is not a
+   * ceiling.
+   */
+  readonly maxSpendMicros?: number;
+  /**
+   * Called after each accepted append, for a live observer.
+   *
+   * Receives the store so the caller can read the recorded event; the writer only knows
+   * the id and position.
+   */
+  readonly onAppended?: (store: InMemoryEventStore, logicalTime: number) => void;
 }
 
 export interface RunResult {
@@ -316,6 +331,16 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     gateway,
     runId: config.runId,
     startWallTimeMs: Date.UTC(2026, 0, 1, 0, 0, 0),
+    ...(config.onAppended === undefined
+      ? {}
+      : {
+          onAppended: (_eventId, logicalTime) => {
+            (config.onAppended as (s: InMemoryEventStore, t: number) => void)(
+              store,
+              logicalTime,
+            );
+          },
+        }),
   });
 
   const mainBranch = scenario.mainBranch ?? "main";
@@ -711,6 +736,23 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     }
 
     const after = await readState();
+
+    // Hard USD ceiling (§6.7, §21.6). Checked every tick, and terminal: an
+    // organization cannot vote itself more money.
+    if (
+      config.maxSpendMicros !== undefined &&
+      invocations.records.reduce((sum, call) => sum + call.costMicros, 0) >=
+        config.maxSpendMicros
+    ) {
+      await writer.append(config.controller.did, EventTypes.BUDGET_EXHAUSTED, {
+        reason: "hard USD ceiling reached",
+        spentMicros: invocations.records.reduce((sum, call) => sum + call.costMicros, 0),
+        ceilingMicros: config.maxSpendMicros,
+      });
+      terminationReason = RunTerminationReason.BUDGET_EXHAUSTED;
+      break;
+    }
+
     if (after.treasury.exhausted) {
       terminationReason = RunTerminationReason.BUDGET_EXHAUSTED;
       break;

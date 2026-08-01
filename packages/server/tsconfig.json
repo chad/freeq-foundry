@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "references": [
+    {
+      "path": "../protocol"
+    },
+    {
+      "path": "../gateway"
+    },
+    {
+      "path": "../event-store"
+    },
+    {
+      "path": "../policy"
+    },
+    {
+      "path": "../capabilities"
+    }
+  ],
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
+  ]
+}

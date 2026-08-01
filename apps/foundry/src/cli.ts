@@ -53,6 +53,16 @@ interface Options {
   /** Provider to drive agents with. Absent means deterministic agents. */
   readonly model?: string;
   readonly snapshot?: string;
+  /**
+   * Explicit consent to spend money.
+   *
+   * Required for any paid provider. A key sitting in the environment is not consent
+   * to use it — I made exactly that mistake and spent someone else's money without
+   * asking.
+   */
+  readonly confirmSpend: boolean;
+  /** Hard ceiling in USD. The run stops rather than exceeding it. */
+  readonly maxSpendUsd: string;
 }
 
 function parseArgs(argv: readonly string[]): Options {
@@ -71,6 +81,8 @@ function parseArgs(argv: readonly string[]): Options {
     quiet: flags.get("quiet") === "true",
     ...(flags.get("model") === undefined ? {} : { model: flags.get("model") as string }),
     ...(flags.get("snapshot") === undefined ? {} : { snapshot: flags.get("snapshot") as string }),
+    confirmSpend: flags.get("yes-spend-money") === "true",
+    maxSpendUsd: flags.get("max-spend-usd") ?? "1.00",
   };
 }
 
@@ -171,11 +183,43 @@ function deterministicPopulation(withSaboteur: boolean): readonly ParticipantSpe
   return base;
 }
 
+/** Providers that bill for every call. */
+const PAID_PROVIDERS = new Set(["anthropic", "openai", "kimi"]);
+
+/**
+ * Refuse to spend money unless it was asked for.
+ *
+ * A key present in the environment is not consent to use it. Returns an explanation
+ * rather than throwing, so the message can be printed as guidance instead of a stack
+ * trace.
+ */
+function spendGuard(options: Options): string | undefined {
+  if (options.model === undefined) return undefined;
+  if (!PAID_PROVIDERS.has(options.model)) return undefined;
+  if (options.confirmSpend) return undefined;
+
+  return [
+    `--model=${options.model} makes paid API calls.`,
+    "",
+    "This is not enabled by a key being present in your environment. To proceed:",
+    "",
+    `  foundry --model=${options.model} --snapshot=<snapshot> --yes-spend-money \\`,
+    `          --max-spend-usd=1.00`,
+    "",
+    "A run of this scenario has cost around $0.30 with three agents. Cost scales with",
+    "the number of agents, the tick ceiling, and how much the organization argues.",
+    "",
+    "To see the whole pipeline at no cost, omit --model: deterministic agents exercise",
+    "every part of the harness except model behaviour.",
+  ].join("\n");
+}
+
 /**
  * Build a provider adapter from a flag.
  *
  * Keys come from the environment, never from a flag: a key in argv ends up in shell
- * history and in process listings.
+ * history and in process listings. Nothing here ever prints a key, or reports its
+ * presence in a way that could include its value.
  */
 function providerAdapter(provider: string, snapshot: string): ModelAdapter {
   switch (provider) {
@@ -218,6 +262,12 @@ async function main(): Promise<number> {
     return 1;
   }
 
+  const refusal = spendGuard(options);
+  if (refusal !== undefined) {
+    console.error(refusal);
+    return 2;
+  }
+
   const recorder = deterministicKeyPair("recorder");
   const controller = deterministicKeyPair("controller");
   const evaluator = deterministicKeyPair("evaluator");
@@ -235,6 +285,11 @@ async function main(): Promise<number> {
   );
   log("");
 
+  if (options.model !== undefined && PAID_PROVIDERS.has(options.model)) {
+    log(`  spend cap  $${options.maxSpendUsd} (hard: the run stops rather than exceed it)`);
+    log("");
+  }
+
   const started = Date.now();
   const result = await executeRun({
     runId: options.runId,
@@ -251,6 +306,7 @@ async function main(): Promise<number> {
     arm: options.arm,
     enforceCapabilities: options.enforce,
     confirmatory: false,
+    maxSpendMicros: Math.round(Number(options.maxSpendUsd) * 1_000_000),
   });
   const wallMs = Date.now() - started;
 
@@ -344,6 +400,13 @@ async function main(): Promise<number> {
   log(`  wrote ${join(dir, "evaluations.json")}`);
   log(`  wrote ${join(dir, "commit-provenance.json")}`);
   log(`  wrote ${join(dir, "product")}/ (${mainFiles.size} files)`);
+
+  if (result.modelInvocations.length > 0) {
+    const micros = result.modelInvocations.reduce((sum, call) => sum + call.costMicros, 0);
+    log("");
+    log(`  model spend  $${(micros / 1_000_000).toFixed(4)} across ${result.modelInvocations.length} calls`);
+    log("");
+  }
 
   if (result.modelInvocations.length > 0) {
     // The recording that makes a model-driven run replayable at zero cost (§6.9).

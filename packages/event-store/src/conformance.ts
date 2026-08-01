@@ -576,21 +576,23 @@ export function runEventStoreConformance(
     });
 
     it("does not let a caller mutate stored events through a read", async () => {
+      // Asserts the *guarantee*, not the mechanism. Freezing and handing out fresh
+      // copies are both valid; an earlier version of this test required freezing and
+      // so failed a backend that was equally safe.
       const store = await fresh();
       const alice = actor("alice");
       await store.append(attest(RUN, alice, "m", { text: "original" }));
 
       const [event] = await collect(store.read(RUN));
-      let refused = false;
       try {
         (event as unknown as { payload: unknown }).payload = { text: "mutated" };
       } catch {
-        // Frozen. The strongest available guarantee, and the one we want.
-        refused = true;
+        // A frozen object refuses outright, which is also acceptable.
       }
-      expect(refused).toBe(true);
 
-      // And regardless, the store's own copy must still verify.
+      // What must hold: a later read is unaffected, and the chain still verifies.
+      const [again] = await collect(store.read(RUN));
+      expect((again?.payload as { text: string }).text).toBe("original");
       expect((await store.verifyChain(RUN)).valid).toBe(true);
     });
   });
