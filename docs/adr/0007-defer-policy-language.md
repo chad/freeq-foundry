@@ -1,8 +1,10 @@
 # ADR-0007: Defer the policy language decision to Milestone 4
 
-**Status:** Deferred
+**Status:** Superseded by [ADR-0010](0010-policy-language.md)
 **Date:** 2026-02-19
 **Spec references:** [§17.3](../specification.md#173-policy-language), [§20](../specification.md#20-capability-security), [§58.11](../specification.md#5811-policy-language), [§50](../specification.md#50-implementation-roadmap)
+
+**Superseded by:** [ADR-0010](0010-policy-language.md) — the five-rule exercise is at [policy-language-exercise.md](../policy-language-exercise.md), and rule 4 decided it as predicted.
 
 **Defers open question:** [§58.11 Policy language](../specification.md#5811-policy-language)
 

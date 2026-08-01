@@ -18,9 +18,10 @@ history — the same principle the platform itself enforces
 | [0004](0004-canonical-serialization.md) | RFC 8785 JCS + SHA-256 for canonical bytes and hashes | Accepted |
 | [0005](0005-signature-suite.md) | Ed25519 with domain-separated signing payloads | Accepted |
 | [0006](0006-event-store-backend.md) | Event store interface with in-memory and PostgreSQL backends | Accepted |
-| [0007](0007-defer-policy-language.md) | Defer the policy language decision to Milestone 4 | Accepted |
+| [0007](0007-defer-policy-language.md) | Defer the policy language decision to Milestone 4 | Superseded by ADR-0010 |
 | [0008](0008-event-authorship.md) | Participants attest content; the recorder attests position | Accepted |
 | [0009](0009-research-protocol-harness-requirements.md) | Harness requirements implied by the research protocol | Accepted |
+| [0010](0010-policy-language.md) | A restricted conjunctive policy language | Accepted |
 
 ## Status values
 

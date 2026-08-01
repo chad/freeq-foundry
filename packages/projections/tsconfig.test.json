@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "rootDir": ".", "types": ["node"] },
+  "references": [{ "path": "../protocol" }],
+  "include": ["src/**/*.ts", "vitest.config.ts"],
+  "exclude": []
+}

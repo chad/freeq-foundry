@@ -23,7 +23,7 @@ that impossible.
 | [58.8](specification.md#588-legal-ownership) | Legal ownership | **Out of scope** | Spec declares out of scope for v1 |
 | [58.9](specification.md#589-reputation-portability) | Reputation portability | Open | Post-v1 |
 | [58.10](specification.md#5810-organization-migration) | Organization migration | Open | Post-v1 |
-| [58.11](specification.md#5811-policy-language) | Policy language | **Deferred → M4** | [ADR-0007](adr/0007-defer-policy-language.md) |
+| [58.11](specification.md#5811-policy-language) | Policy language | **Decided** | [ADR-0010](adr/0010-policy-language.md) |
 | [58.12](specification.md#5812-public-spectator-latency) | Spectator latency | Deferred → M12 | Needs a threat model |
 | [58.13](specification.md#5813-research-rigor) | Research rigor | **Decided** | [research-protocol.md](research-protocol.md), [ADR-0009](adr/0009-research-protocol-harness-requirements.md) |
 | [58.14](specification.md#5814-agent-safety-declaration) | Agent safety declaration | Deferred → M11 | Attestation at admission |
@@ -176,9 +176,26 @@ foreclose cheaply.
 
 ## 58.11 — Policy language
 
-**Deferred to Milestone 4.** [ADR-0007](adr/0007-defer-policy-language.md), with
-a five-rule entry exercise. Attenuation checking
-([§20.5](specification.md#205-capability-attenuation)) is the discriminator.
+**Decided.** [ADR-0010](adr/0010-policy-language.md), following the five-rule
+exercise at [policy-language-exercise.md](policy-language-exercise.md).
+
+Rule 4 — mechanical attenuation checking — decided it exactly as
+[ADR-0007](adr/0007-defer-policy-language.md) predicted. No general-purpose
+expression language can soundly answer "is this grant strictly narrower than its
+parent?" without a constraint solver, and an unsound answer in the authorization
+path is a privilege escalation.
+
+The outcome was to *partition* the problem rather than pick one language:
+conditions use a restricted conjunctive DSL where narrowing is decidable by
+construction; aggregation is named built-ins, because election determinism matters
+more than expressiveness; lifecycle is structural fields, computable without
+evaluating anything.
+
+Two findings the exercise did not anticipate: legibility *to a model* is a real
+selection criterion, since agents write their own rules
+([§16.9](specification.md#169-governance-automation)) — that alone disfavoured
+Rego. And attribute-to-attribute comparison had to be excluded too, discovered
+while implementing the exercise's own rule 1.
 
 ## 58.12 — Public spectator latency
 
