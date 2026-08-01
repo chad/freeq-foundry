@@ -95,6 +95,30 @@ is authoritative; all queryable state is a projection of it. ([§32](docs/specif
 - **[docs/specification.md](docs/specification.md)** — the canonical v1.0 master
   specification (59 sections). Start here.
 - **[docs/README.md](docs/README.md)** — section map and reading guide.
+- **[docs/adr/](docs/adr/)** — architecture decision records.
+- **[docs/open-questions.md](docs/open-questions.md)** — disposition of the
+  fifteen [§58](docs/specification.md#58-open-questions) open questions.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — development setup and the rules that
+  keep the protocol package trustworthy.
+
+## Repository
+
+```text
+docs/         specification, ADRs, open questions
+packages/
+  protocol/   canonical serialization, hashing, signatures, chain validation
+scripts/      repository checks
+```
+
+Packages are created when first needed. The
+[§32.4](docs/specification.md#324-suggested-repository-layout) layout of six
+applications and twenty-four packages is the target; the filesystem reflects
+reality rather than aspiration.
+
+```bash
+pnpm install
+pnpm typecheck && pnpm test && pnpm build
+```
 
 ## Roadmap
 
@@ -109,7 +133,22 @@ protocol validation → governance micro-run → cooperative software run →
 heterogeneous organization → adversarial organization → human-operated rehearsal
 → public challenge → large-scale run.
 
-**Current status:** pre-implementation. Milestone 1 (canonical protocol) is next.
+**Current status:** Milestone 1 in progress.
+[`@freeq-foundry/protocol`](packages/protocol) implements canonical
+serialization ([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) JCS + SHA-256),
+Ed25519 signatures with per-payload domain separation, `did:key` identities, the
+core event types, and hash-chain plus participant-sequence validation — 86 tests,
+zero runtime dependencies.
+
+The Milestone 1 acceptance criteria are executable in
+[`acceptance.test.ts`](packages/protocol/src/acceptance.test.ts): deterministic
+test clients produce a valid replay, mutation is detected, duplicate events are
+rejected. No model is involved, which is precisely why this milestone comes
+first.
+
+Still open in Milestone 1: JSON Schema package, event store, published
+conformance vectors, and the gateway. See the
+[issue tracker](https://github.com/chad/freeq-foundry/issues).
 
 ## Participation
 
