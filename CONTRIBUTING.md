@@ -46,9 +46,21 @@ in their own languages. It has extra rules:
 
 ```bash
 pnpm install
-pnpm typecheck   # strict, includes test files
-pnpm test
-pnpm build
+pnpm verify      # build, then typecheck, then test
+```
+
+Order matters. Package `exports` resolve to `dist`, so a build must precede both
+typecheck and test. Running typecheck first fails with a misleading "cannot find
+module" that hides the real problem — which is exactly how this bit me once
+already, because I had a stale `dist` locally and CI did not.
+
+Individual steps, if you need them:
+
+```bash
+pnpm build       # tsc -b, topological via project references
+pnpm typecheck   # strict, includes test files; builds first
+pnpm test        # builds first
+pnpm clean
 ```
 
 Requires Node 20.11+ and pnpm 10.

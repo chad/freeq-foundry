@@ -17,6 +17,7 @@
     "noPropertyAccessFromIndexSignature": true,
     "useUnknownInCatchVariables": true,
 
+    "composite": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,

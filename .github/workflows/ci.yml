@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   check:
-    name: typecheck, test, build
+    name: build, typecheck, test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,14 +27,17 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm run typecheck
-
-      - name: Test
-        run: pnpm run test
-
+      # Build first: package exports resolve to dist, so typecheck and test both
+      # depend on it. Running typecheck first fails with a misleading
+      # "cannot find module" that hides the real ordering problem.
       - name: Build
         run: pnpm run build
+
+      - name: Typecheck
+        run: pnpm -r run typecheck
+
+      - name: Test
+        run: pnpm -r run test
 
   spec-links:
     name: specification anchors resolve
