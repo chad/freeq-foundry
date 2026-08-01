@@ -1,0 +1,37 @@
+{
+  "name": "@freeq-foundry/foundry-agents",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Heterogeneous Foundry agents that live on the freeq network",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "foundry-agent": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@freeq-foundry/agents": "workspace:*",
+    "@freeq-foundry/capabilities": "workspace:*",
+    "@freeq-foundry/governance": "workspace:*",
+    "@freeq-foundry/identity": "workspace:*",
+    "@freeq-foundry/model-adapters": "workspace:*",
+    "@freeq-foundry/policy": "workspace:*",
+    "@freeq-foundry/projections": "workspace:*",
+    "@freeq-foundry/protocol": "workspace:*",
+    "@freeq-foundry/sandbox": "workspace:*",
+    "@freeq/bot-kit": "file:../../../freeq/freeq-bot-kit-js",
+    "@freeq/sdk": "file:../../../freeq/freeq-sdk-js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.6"
+  }
+}

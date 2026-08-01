@@ -1,0 +1,44 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": [
+      "node"
+    ]
+  },
+  "references": [
+    {
+      "path": "../../packages/protocol"
+    },
+    {
+      "path": "../../packages/identity"
+    },
+    {
+      "path": "../../packages/policy"
+    },
+    {
+      "path": "../../packages/model-adapters"
+    },
+    {
+      "path": "../../packages/capabilities"
+    },
+    {
+      "path": "../../packages/projections"
+    },
+    {
+      "path": "../../packages/governance"
+    },
+    {
+      "path": "../../packages/sandbox"
+    },
+    {
+      "path": "../../packages/agents"
+    }
+  ],
+  "include": [
+    "src/**/*.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": []
+}

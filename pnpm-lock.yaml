@@ -62,6 +62,52 @@ importers:
         specifier: ^3.2.6
         version: 3.2.7(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.1)
 
+  apps/foundry-agents:
+    dependencies:
+      '@freeq-foundry/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
+      '@freeq-foundry/capabilities':
+        specifier: workspace:*
+        version: link:../../packages/capabilities
+      '@freeq-foundry/governance':
+        specifier: workspace:*
+        version: link:../../packages/governance
+      '@freeq-foundry/identity':
+        specifier: workspace:*
+        version: link:../../packages/identity
+      '@freeq-foundry/model-adapters':
+        specifier: workspace:*
+        version: link:../../packages/model-adapters
+      '@freeq-foundry/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
+      '@freeq-foundry/projections':
+        specifier: workspace:*
+        version: link:../../packages/projections
+      '@freeq-foundry/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@freeq-foundry/sandbox':
+        specifier: workspace:*
+        version: link:../../packages/sandbox
+      '@freeq/bot-kit':
+        specifier: file:../../../freeq/freeq-bot-kit-js
+        version: file:../freeq/freeq-bot-kit-js
+      '@freeq/sdk':
+        specifier: file:../../../freeq/freeq-sdk-js
+        version: file:../freeq/freeq-sdk-js
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.7(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.1)
+
   packages/agents:
     dependencies:
       '@freeq-foundry/model-adapters':
@@ -582,6 +628,13 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@freeq/bot-kit@file:../freeq/freeq-bot-kit-js':
+    resolution: {directory: ../freeq/freeq-bot-kit-js, type: directory}
+    engines: {node: '>=22'}
+
+  '@freeq/sdk@file:../freeq/freeq-sdk-js':
+    resolution: {directory: ../freeq/freeq-sdk-js, type: directory}
+
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
 
@@ -757,6 +810,10 @@ packages:
     resolution: {integrity: sha512-PAJdDJusoxnwm1VwW07VWwUN1sl7smmC3OKggvndJFadxxDRyFJBX/ggnu/KE4kQAB7a3Dp8f/YXC1FlUprWmA==}
     engines: {node: '>= 16'}
 
+  commander@14.0.3:
+    resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
+    engines: {node: '>=20'}
+
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
     engines: {node: '>=6.0'}
@@ -808,6 +865,9 @@ packages:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  idb@8.0.3:
+    resolution: {integrity: sha512-LtwtVyVYO5BqRvcsKuB2iUMnHwPVByPCXFXOpuU96IZPPoPN6xjOGxZQ74pgSVVLQWtUOYgyeL4GE98BY5D3wg==}
 
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
@@ -1157,6 +1217,15 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
+  '@freeq/bot-kit@file:../freeq/freeq-bot-kit-js':
+    dependencies:
+      '@freeq/sdk': file:../freeq/freeq-sdk-js
+      commander: 14.0.3
+
+  '@freeq/sdk@file:../freeq/freeq-sdk-js':
+    dependencies:
+      idb: 8.0.3
+
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
   '@napi-rs/wasm-runtime@1.2.2(@emnapi/core@2.0.0-alpha.3)(@emnapi/runtime@2.0.0-alpha.3)':
@@ -1304,6 +1373,8 @@ snapshots:
 
   check-error@2.1.3: {}
 
+  commander@14.0.3: {}
+
   debug@4.4.3:
     dependencies:
       ms: 2.1.3
@@ -1359,6 +1430,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  idb@8.0.3: {}
 
   js-tokens@9.0.1: {}
 
