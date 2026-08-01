@@ -89,6 +89,18 @@ export class SequenceTracker {
   snapshot(): ReadonlyMap<string, number> {
     return new Map(this.#latest);
   }
+
+  /**
+   * Restore a previous snapshot.
+   *
+   * Exists so a store can roll back a partially applied batch. Not for use
+   * during normal operation — rewinding accepted sequences would reopen the
+   * replay window this class exists to close.
+   */
+  reset(snapshot: ReadonlyMap<string, number>): void {
+    this.#latest.clear();
+    for (const [did, sequence] of snapshot) this.#latest.set(did, sequence);
+  }
 }
 
 export interface ChainViolation {

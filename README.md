@@ -106,10 +106,11 @@ is authoritative; all queryable state is a projection of it. ([§32](docs/specif
 ## Repository
 
 ```text
-docs/         specification, ADRs, open questions
+docs/            specification, ADRs, research protocol, open questions
 packages/
-  protocol/   canonical serialization, hashing, signatures, chain validation
-scripts/      repository checks
+  protocol/      canonical serialization, hashing, signatures, chain validation
+  event-store/   append-only store interface + in-memory reference backend
+scripts/         repository checks
 ```
 
 Packages are created when first needed. The
@@ -148,8 +149,13 @@ test clients produce a valid replay, mutation is detected, duplicate events are
 rejected. No model is involved, which is precisely why this milestone comes
 first.
 
-Still open in Milestone 1: JSON Schema package, event store, published
-conformance vectors, and the gateway. See the
+[`@freeq-foundry/event-store`](packages/event-store) adds the append-only store:
+no mutation surface, per-run serialized position assignment, all-or-nothing
+batches, and a conformance suite written against the interface so the PostgreSQL
+backend inherits it unchanged. 166 tests across both packages.
+
+Still open in Milestone 1: JSON Schema package, published conformance vectors,
+and the gateway. See the
 [issue tracker](https://github.com/chad/freeq-foundry/issues).
 
 ## Participation
