@@ -9,7 +9,13 @@
 import { describe, expect, it } from "vitest";
 import { verifyChain, SequenceTracker } from "./chain.js";
 import { ProtocolErrorCode } from "./errors.js";
-import { computeEventHash, sealEvent, signEvent, verifyEvent } from "./event.js";
+import {
+  attestEvent,
+  computeEventHash,
+  positionEvent,
+  recordEvent,
+  verifyEvent,
+} from "./event.js";
 import { GENESIS_HASH } from "./hash.js";
 import {
   buildSampleRun,
@@ -17,17 +23,24 @@ import {
   testParticipant,
   TestRunBuilder,
 } from "./testing.js";
-import type { SignedEvent } from "./types.js";
+import type { RecordedEvent } from "./types.js";
+
+/**
+ * The sample run's recorder. In production a verifier reads this from the run
+ * manifest (§53); it is deliberately not carried inside the events, since an
+ * event that named its own recorder would let a forger name themselves.
+ */
+const RECORDER_DID = testParticipant("recorder", "controller").did;
 
 /** Structurally clone an event so a test mutation cannot leak between cases. */
-function clone(events: readonly SignedEvent[]): SignedEvent[] {
-  return JSON.parse(JSON.stringify(events)) as SignedEvent[];
+function clone(events: readonly RecordedEvent[]): RecordedEvent[] {
+  return JSON.parse(JSON.stringify(events)) as RecordedEvent[];
 }
 
 describe("acceptance: deterministic test clients produce a valid replay", () => {
   it("builds a valid chain", () => {
     const run = buildSampleRun();
-    const result = verifyChain(run.events, { runId: run.runId });
+    const result = verifyChain(run.events, { runId: run.runId, recorderDid: RECORDER_DID });
     expect(result.violations).toEqual([]);
     expect(result.valid).toBe(true);
     expect(result.checked).toBe(6);
@@ -44,7 +57,7 @@ describe("acceptance: deterministic test clients produce a valid replay", () => 
     const reimported = parseNdjson(exported);
 
     expect(reimported).toHaveLength(run.events.length);
-    const result = verifyChain(reimported, { runId: run.runId });
+    const result = verifyChain(reimported, { runId: run.runId, recorderDid: RECORDER_DID });
     expect(result.violations).toEqual([]);
 
     // Re-exporting must reproduce the original bytes exactly, or the export
@@ -54,7 +67,11 @@ describe("acceptance: deterministic test clients produce a valid replay", () => 
 
   it("verifies every signature individually", () => {
     for (const event of buildSampleRun().events) {
-      expect(verifyEvent(event).valid).toBe(true);
+      const result = verifyEvent(event, { recorderDid: RECORDER_DID });
+      expect(result.errors).toEqual([]);
+      expect(result.contentAttested).toBe(true);
+      expect(result.hashValid).toBe(true);
+      expect(result.positionAttested).toBe(true);
     }
   });
 
@@ -82,7 +99,7 @@ describe("acceptance: deterministic test clients produce a valid replay", () => 
 describe("acceptance: mutation is detected", () => {
   const cases: Array<{
     name: string;
-    mutate: (events: SignedEvent[]) => void;
+    mutate: (events: RecordedEvent[]) => void;
     expectCode: ProtocolErrorCode;
     expectIndex: number;
   }> = [
@@ -119,7 +136,17 @@ describe("acceptance: mutation is detected", () => {
       expectIndex: 2,
     },
     {
-      name: "signature swapped between events",
+      name: "recorder signature swapped between events",
+      mutate: (events) => {
+        const a = events[1] as { recorderSignature: string };
+        const b = events[2] as { recorderSignature: string };
+        [a.recorderSignature, b.recorderSignature] = [b.recorderSignature, a.recorderSignature];
+      },
+      expectCode: ProtocolErrorCode.INVALID_RECORDER_SIGNATURE,
+      expectIndex: 1,
+    },
+    {
+      name: "content signature swapped between events",
       mutate: (events) => {
         const a = events[1] as { signature: string };
         const b = events[2] as { signature: string };
@@ -161,8 +188,8 @@ describe("acceptance: mutation is detected", () => {
     {
       name: "events reordered",
       mutate: (events) => {
-        const a = events[2] as SignedEvent;
-        const b = events[3] as SignedEvent;
+        const a = events[2] as RecordedEvent;
+        const b = events[3] as RecordedEvent;
         events[2] = b;
         events[3] = a;
       },
@@ -176,7 +203,7 @@ describe("acceptance: mutation is detected", () => {
       const events = clone(buildSampleRun().events);
       mutate(events);
 
-      const result = verifyChain(events, { runId: "run-sample-001" });
+      const result = verifyChain(events, { runId: "run-sample-001", recorderDid: RECORDER_DID });
       expect(result.valid).toBe(false);
       expect(result.firstBadIndex).toBe(expectIndex);
       expect(result.violations.map((v) => v.code)).toContain(expectCode);
@@ -191,7 +218,7 @@ describe("acceptance: mutation is detected", () => {
     const events = clone(buildSampleRun().events);
     (events[1] as { payload: unknown }).payload = { did: "did:key:zTampered" };
 
-    const result = verifyChain(events, { runId: "run-sample-001" });
+    const result = verifyChain(events, { runId: "run-sample-001", recorderDid: RECORDER_DID });
     expect(result.valid).toBe(false);
     expect(result.firstBadIndex).toBe(1);
     expect(new Set(result.violations.map((v) => v.index))).toEqual(new Set([1]));
@@ -212,9 +239,9 @@ describe("acceptance: mutation is detected", () => {
     const events = clone(buildSampleRun().events);
     const target = events[1] as { payload: unknown; eventHash: string };
     target.payload = { did: "did:key:zTampered" };
-    target.eventHash = computeEventHash(events[1] as SignedEvent);
+    target.eventHash = computeEventHash(events[1] as RecordedEvent);
 
-    const result = verifyChain(events, { runId: "run-sample-001" });
+    const result = verifyChain(events, { runId: "run-sample-001", recorderDid: RECORDER_DID });
     expect(result.valid).toBe(false);
     expect(result.firstBadIndex).toBe(1);
     // Event 1's signature no longer covers its content, and event 2 onwards
@@ -228,33 +255,73 @@ describe("acceptance: mutation is detected", () => {
     expect(new Set(result.violations.map((v) => v.index)).size).toBeGreaterThan(1);
   });
 
-  it("detects a re-signed event, because the chain no longer matches", () => {
-    // The strongest case: an attacker who holds the actor's key can forge one
-    // event, but cannot make it fit the chain without rewriting everything
-    // after it — which requires every other participant's key too.
+  it("detects content re-signed with the participant key but not the recorder key", () => {
+    // An attacker who compromises one participant's key can produce a
+    // convincing content attestation, but cannot attest position. This is the
+    // separation ADR-0008 buys: forging attribution and forging placement now
+    // require two different keys.
     const run = buildSampleRun();
     const events = clone(run.events);
     const victim = testParticipant("alice", "agent");
 
-    const forgedDraft = {
-      ...events[3],
-      payload: { channelId: "genesis", text: "forged but properly signed" },
-    } as unknown as Parameters<typeof sealEvent>[0];
-
-    const forged = signEvent(
-      sealEvent(forgedDraft, {
-        logicalTime: 3,
-        previousEventHash: events[2]?.eventHash as never,
-      }),
+    const forgedContent = attestEvent(
+      {
+        ...(events[3] as unknown as Parameters<typeof attestEvent>[0]),
+        payload: { channelId: "genesis", text: "forged with a stolen key" },
+      },
       victim.keyPair.privateKey,
     );
+    const forged = positionEvent(forgedContent, {
+      logicalTime: 3,
+      previousEventHash: events[2]?.eventHash as never,
+    });
 
-    events[3] = forged as SignedEvent;
+    // Keep the original recorder signature, which the attacker cannot reproduce.
+    events[3] = {
+      ...forged,
+      recorderSignature: (events[3] as RecordedEvent).recorderSignature,
+    } as RecordedEvent;
 
-    // The forged event verifies on its own terms...
-    expect(verifyEvent(events[3] as SignedEvent).valid).toBe(true);
-    // ...but its hash differs, so event 4's back-link no longer matches.
-    const result = verifyChain(events, { runId: run.runId });
+    const single = verifyEvent(events[3] as RecordedEvent, { recorderDid: RECORDER_DID });
+    expect(single.contentAttested).toBe(true); // the stolen key works...
+    expect(single.positionAttested).toBe(false); // ...but the recorder's does not
+    expect(single.valid).toBe(false);
+
+    const result = verifyChain(events, { runId: run.runId, recorderDid: RECORDER_DID });
+    expect(result.valid).toBe(false);
+    expect(result.violations.map((v) => v.code)).toContain(
+      ProtocolErrorCode.INVALID_RECORDER_SIGNATURE,
+    );
+  });
+
+  it("detects a fully re-signed event when both keys are compromised", () => {
+    // Worst case: the attacker holds both the participant and recorder keys and
+    // can produce a self-consistent event. The chain still gives them away,
+    // because event 4 links to the hash of the event that used to be here.
+    const run = buildSampleRun();
+    const events = clone(run.events);
+    const victim = testParticipant("alice", "agent");
+    const recorder = testParticipant("recorder", "controller");
+
+    const forged = recordEvent(
+      positionEvent(
+        attestEvent(
+          {
+            ...(events[3] as unknown as Parameters<typeof attestEvent>[0]),
+            payload: { channelId: "genesis", text: "forged with both keys" },
+          },
+          victim.keyPair.privateKey,
+        ),
+        { logicalTime: 3, previousEventHash: events[2]?.eventHash as never },
+      ),
+      recorder.keyPair.privateKey,
+    );
+    events[3] = forged as RecordedEvent;
+
+    // The forged event is internally perfect.
+    expect(verifyEvent(events[3] as RecordedEvent, { recorderDid: RECORDER_DID }).valid).toBe(true);
+    // The chain is not.
+    const result = verifyChain(events, { runId: run.runId, recorderDid: RECORDER_DID });
     expect(result.valid).toBe(false);
     expect(result.violations.some((v) => v.code === ProtocolErrorCode.BROKEN_CHAIN)).toBe(true);
   });
@@ -263,9 +330,9 @@ describe("acceptance: mutation is detected", () => {
 describe("acceptance: duplicate events are rejected", () => {
   it("rejects a repeated eventId", () => {
     const events = clone(buildSampleRun().events);
-    events.splice(3, 0, events[2] as SignedEvent);
+    events.splice(3, 0, events[2] as RecordedEvent);
 
-    const result = verifyChain(events, { runId: "run-sample-001" });
+    const result = verifyChain(events, { runId: "run-sample-001", recorderDid: RECORDER_DID });
     expect(result.valid).toBe(false);
     expect(result.violations.map((v) => v.code)).toContain(
       ProtocolErrorCode.DUPLICATE_EVENT_ID,
@@ -327,7 +394,7 @@ describe("acceptance: duplicate events are rejected", () => {
 
 describe("acceptance: cross-cutting", () => {
   it("rejects events from a different run", () => {
-    const result = verifyChain(buildSampleRun("run-a").events, { runId: "run-b" });
+    const result = verifyChain(buildSampleRun("run-a").events, { runId: "run-b", recorderDid: RECORDER_DID });
     expect(result.valid).toBe(false);
     expect(result.violations.map((v) => v.code)).toContain(ProtocolErrorCode.RUN_MISMATCH);
   });
@@ -343,20 +410,100 @@ describe("acceptance: cross-cutting", () => {
 
   it("verifies a mid-chain slice when genesis is not expected", () => {
     const events = buildSampleRun().events.slice(2);
-    expect(verifyChain(events, { expectGenesis: false }).valid).toBe(true);
-    expect(verifyChain(events, { expectGenesis: true }).valid).toBe(false);
+    expect(verifyChain(events, { expectGenesis: false, recorderDid: RECORDER_DID }).valid).toBe(true);
+    expect(verifyChain(events, { expectGenesis: true, recorderDid: RECORDER_DID }).valid).toBe(false);
   });
 
   it("stops early when asked", () => {
     const events = clone(buildSampleRun().events);
     (events[1] as { payload: unknown }).payload = { tampered: true };
-    const result = verifyChain(events, { stopOnFirst: true });
+    const result = verifyChain(events, { stopOnFirst: true, recorderDid: RECORDER_DID });
     expect(result.violations).toHaveLength(1);
   });
 
   it("recomputes hashes rather than trusting them", () => {
     // Every chain verification is therefore also a test of the canonicalizer.
     const [event] = buildSampleRun().events;
-    expect(computeEventHash(event as SignedEvent)).toBe(event?.eventHash);
+    expect(computeEventHash(event as RecordedEvent)).toBe(event?.eventHash);
+  });
+});
+
+describe("acceptance: the two attestations are independent (ADR-0008)", () => {
+  it("answers three separable questions", () => {
+    const [event] = buildSampleRun().events;
+    const result = verifyEvent(event as RecordedEvent, { recorderDid: RECORDER_DID });
+    expect(result).toMatchObject({
+      contentAttested: true,
+      hashValid: true,
+      positionAttested: true,
+      valid: true,
+    });
+  });
+
+  it("verifies content attribution without trusting the recorder", () => {
+    // The property that matters if the platform is dishonest: anyone can check
+    // what a participant said, using only the participant's DID.
+    const [, admitted] = buildSampleRun().events;
+    const result = verifyEvent(admitted as RecordedEvent);
+    expect(result.contentAttested).toBe(true);
+    expect(result.positionAttested).toBe(false); // not checked, not claimed
+  });
+
+  it("rejects a recorder signature from the wrong recorder", () => {
+    const impostor = testParticipant("impostor", "controller");
+    const [event] = buildSampleRun().events;
+    const result = verifyEvent(event as RecordedEvent, { recorderDid: impostor.did });
+    expect(result.contentAttested).toBe(true);
+    expect(result.positionAttested).toBe(false);
+    expect(result.errors.map((e) => e.code)).toContain(
+      ProtocolErrorCode.INVALID_RECORDER_SIGNATURE,
+    );
+  });
+
+  it("keeps the content signature stable across repositioning", () => {
+    // This is what removes the reservation round-trip: a participant can sign
+    // before knowing where the event will land.
+    const alice = testParticipant("alice", "agent");
+    const draft = {
+      eventId: "evt-1",
+      runId: "run-x",
+      eventType: "channel.message",
+      schemaVersion: 1,
+      actorDid: alice.did,
+      participantType: "agent" as const,
+      participantSequence: 1,
+      wallTime: "2026-01-01T00:00:00.000Z",
+      payload: { text: "hello" },
+      visibility: { type: "public" as const },
+      references: [],
+      provenance: {
+        signerDid: alice.did,
+        terminalHumanDids: [alice.did],
+        provenancePathHashes: [],
+        admissionCredentialId: "adm-1",
+        directInstructionEventIds: [],
+        governanceAuthorizationIds: [],
+        capabilityGrantIds: [],
+      },
+    };
+
+    const attested = attestEvent(draft, alice.keyPair.privateKey);
+    const atZero = positionEvent(attested, { logicalTime: 0, previousEventHash: GENESIS_HASH });
+    const atSeven = positionEvent(attested, { logicalTime: 7, previousEventHash: GENESIS_HASH });
+
+    expect(atZero.signature).toBe(atSeven.signature);
+    // But the hashes differ, because position is part of the record.
+    expect(atZero.eventHash).not.toBe(atSeven.eventHash);
+  });
+
+  it("cannot replay a content signature as a recorder signature", () => {
+    // Domain separation, applied to the two roles a controller may hold at once.
+    const [event] = buildSampleRun().events;
+    const swapped = {
+      ...(event as RecordedEvent),
+      recorderSignature: (event as RecordedEvent).signature,
+    };
+    const result = verifyEvent(swapped, { recorderDid: RECORDER_DID });
+    expect(result.positionAttested).toBe(false);
   });
 });

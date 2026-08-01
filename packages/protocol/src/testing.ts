@@ -8,14 +8,14 @@
  *
  * Spec: §50 Milestone 1, §24.8 (deterministic agents).
  */
-import { sealAndSignEvent } from "./event.js";
+import { attestPositionAndRecord } from "./event.js";
 import { GENESIS_HASH, type Digest } from "./hash.js";
 import { keyPairFromSeed, type KeyPair } from "./keys.js";
 import type {
   ActionProvenance,
   DraftEvent,
   ParticipantType,
-  SignedEvent,
+  RecordedEvent,
   VisibilityPolicy,
 } from "./types.js";
 
@@ -62,18 +62,28 @@ export interface AppendSpec {
  */
 export class TestRunBuilder {
   readonly #runId: string;
-  readonly #events: SignedEvent[] = [];
+  readonly #recorder: TestParticipant;
+  readonly #events: RecordedEvent[] = [];
   readonly #sequences = new Map<string, number>();
   #logicalTime = 0;
   #previousHash: Digest = GENESIS_HASH;
   #wallTimeMs: number;
 
-  constructor(runId: string, startWallTimeMs = Date.UTC(2026, 0, 1, 0, 0, 0)) {
+  constructor(
+    runId: string,
+    options: {
+      readonly recorder?: TestParticipant;
+      readonly startWallTimeMs?: number;
+    } = {},
+  ) {
     this.#runId = runId;
-    this.#wallTimeMs = startWallTimeMs;
+    // One recorder per run, whose DID a verifier obtains from the run manifest
+    // rather than from the events themselves (ADR-0008).
+    this.#recorder = options.recorder ?? testParticipant("recorder", "controller");
+    this.#wallTimeMs = options.startWallTimeMs ?? Date.UTC(2026, 0, 1, 0, 0, 0);
   }
 
-  append(spec: AppendSpec): SignedEvent {
+  append(spec: AppendSpec): RecordedEvent {
     const sequence = (this.#sequences.get(spec.actor.did) ?? 0) + 1;
     this.#sequences.set(spec.actor.did, sequence);
 
@@ -103,13 +113,14 @@ export class TestRunBuilder {
       ...(spec.causationId === undefined ? {} : { causationId: spec.causationId }),
     };
 
-    const event = sealAndSignEvent(
+    const event = attestPositionAndRecord(
       draft,
       {
         logicalTime: this.#logicalTime,
         previousEventHash: this.#previousHash,
       },
       spec.actor.keyPair.privateKey,
+      this.#recorder.keyPair.privateKey,
     );
 
     this.#events.push(event);
@@ -123,7 +134,12 @@ export class TestRunBuilder {
     return this.#runId;
   }
 
-  get events(): readonly SignedEvent[] {
+  /** The run's recorder. In production this comes from the run manifest (§53). */
+  get recorderDid(): string {
+    return this.#recorder.did;
+  }
+
+  get events(): readonly RecordedEvent[] {
     return this.#events;
   }
 
@@ -134,11 +150,11 @@ export class TestRunBuilder {
 }
 
 /** Parse an `events.ndjson` export. */
-export function parseNdjson(text: string): SignedEvent[] {
+export function parseNdjson(text: string): RecordedEvent[] {
   return text
     .split("\n")
     .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line) as SignedEvent);
+    .map((line) => JSON.parse(line) as RecordedEvent);
 }
 
 /**

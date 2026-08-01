@@ -73,10 +73,10 @@ export interface ActionProvenance {
 }
 
 /**
- * An event before the platform has assigned its position in the log.
+ * Event content, before anyone has attested to it.
  *
  * `logicalTime` is absent because canonical append order *is* logical time and
- * only the gateway may assign it (§33.4). A client that could set it could
+ * only the recorder may assign it (§33.4). A client that could set it could
  * reorder history.
  */
 export interface DraftEvent<T = unknown> {
@@ -96,23 +96,41 @@ export interface DraftEvent<T = unknown> {
   readonly provenance: ActionProvenance;
 }
 
-/** A draft that has been positioned and chained, but not yet signed. */
-export interface UnsignedEvent<T = unknown> extends DraftEvent<T> {
+/**
+ * Content attested by the participant: "I said this."
+ *
+ * The signature covers content only, not position, so it is stable wherever the
+ * event lands. That is what lets a participant sign without first asking the
+ * recorder where the event will go (ADR-0008).
+ */
+export interface AttributedEvent<T = unknown> extends DraftEvent<T> {
+  readonly signature: string;
+}
+
+/** Positioned in the chain and hashed, but not yet attested by the recorder. */
+export interface PositionedEvent<T = unknown> extends AttributedEvent<T> {
   readonly logicalTime: number;
   readonly previousEventHash: Digest;
   readonly eventHash: Digest;
 }
 
 /**
- * A complete canonical event (§33.1).
+ * A complete canonical event (§33.1), carrying both attestations.
  *
- * Signed and unsigned forms are distinct types so an unsigned event cannot be
+ * `signature` is the participant's, over content. `recorderSignature` is the
+ * recorder's, over the positioned event including that signature. Neither party
+ * can forge the other's claim (ADR-0008).
+ *
+ * The four stages are distinct types so an under-attested event cannot be
  * appended by mistake — the type system enforces what would otherwise be a
  * review comment.
  */
-export interface SignedEvent<T = unknown> extends UnsignedEvent<T> {
-  readonly signature: string;
+export interface RecordedEvent<T = unknown> extends PositionedEvent<T> {
+  readonly recorderSignature: string;
 }
+
+/** Spec §33.1 calls this the canonical event. */
+export type ExperimentEvent<T = unknown> = RecordedEvent<T>;
 
 /** Spec §56.1. */
 export interface SignedActionRequest<T = unknown> {

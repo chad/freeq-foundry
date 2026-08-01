@@ -19,6 +19,7 @@ history — the same principle the platform itself enforces
 | [0005](0005-signature-suite.md) | Ed25519 with domain-separated signing payloads | Accepted |
 | [0006](0006-event-store-backend.md) | Event store interface with in-memory and PostgreSQL backends | Accepted |
 | [0007](0007-defer-policy-language.md) | Defer the policy language decision to Milestone 4 | Accepted |
+| [0008](0008-event-authorship.md) | Participants attest content; the recorder attests position | Accepted |
 
 ## Status values
 

@@ -25,7 +25,10 @@ import { publicKeyFromDidKey } from "./keys.js";
  * change: every previously issued signature stops verifying.
  */
 export const SigningContext = {
+  /** Participant attestation of event content, excluding position (ADR-0008). */
   EVENT: "FREEQ-FOUNDRY-V1-EVENT\n",
+  /** Recorder attestation of event position and chain linkage (ADR-0008). */
+  RECORD: "FREEQ-FOUNDRY-V1-RECORD\n",
   ACTION: "FREEQ-FOUNDRY-V1-ACTION\n",
   HUMAN_ROOT: "FREEQ-FOUNDRY-V1-HUMAN-ROOT\n",
   AGENT_CREATION: "FREEQ-FOUNDRY-V1-AGENT-CREATION\n",

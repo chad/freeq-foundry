@@ -60,13 +60,14 @@ export {
 } from "./signing.js";
 
 export {
+  attestEvent,
+  attestPositionAndRecord,
   computeEventHash,
-  sealAndSignEvent,
-  sealEvent,
-  signEvent,
+  positionEvent,
+  recordEvent,
   verifyEvent,
   type EventVerification,
-  type SealOptions,
+  type PositionOptions,
   type VerifyEventOptions,
 } from "./event.js";
 
@@ -86,16 +87,28 @@ export {
 
 export type {
   ActionProvenance,
+  AttributedEvent,
   CredentialRevocationEvent,
   DiagnosticFinding,
   DraftEvent,
   EventCategory,
+  ExperimentEvent,
   ModelInvocationRecord,
   ParticipantType,
   PolicyExpression,
+  PositionedEvent,
+  RecordedEvent,
   SignedActionRequest,
-  SignedEvent,
   ToolExecutionRecord,
-  UnsignedEvent,
   VisibilityPolicy,
 } from "./types.js";
+
+export {
+  buildSampleRun,
+  deterministicKeyPair,
+  parseNdjson,
+  testParticipant,
+  TestRunBuilder,
+  type AppendSpec,
+  type TestParticipant,
+} from "./testing.js";

@@ -1,8 +1,11 @@
 # ADR-0005: Ed25519 with domain-separated signing payloads
 
-**Status:** Accepted
+**Status:** Accepted; extended by [ADR-0008](0008-event-authorship.md)
 **Date:** 2026-02-19
 **Spec references:** [§6.3](../specification.md#63-key-possession-invariant), [§6.4](../specification.md#64-attribution-invariant), [§33.1](../specification.md#331-canonical-event), [§45](../specification.md#45-security-and-threat-model), [§56.1](../specification.md#561-signed-action-request)
+
+> [ADR-0008](0008-event-authorship.md) adds a ninth context,
+> `FREEQ-FOUNDRY-V1-RECORD`, for recorder attestation of event position.
 
 ## Context
 

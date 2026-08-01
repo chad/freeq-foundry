@@ -74,19 +74,42 @@ defect class ([ADR-0004](../../docs/adr/0004-canonical-serialization.md)):
 Non-integer quantities are encoded as strings with a documented unit. `costUsd`
 is a decimal string, not a float — which is correct for money regardless.
 
-## Hashing and signing
+## Two attestations per event
+
+Two parties make two different claims about every event
+([ADR-0008](../../docs/adr/0008-event-authorship.md)):
+
+| Claim | Made by | Field |
+| --- | --- | --- |
+| "I said this" | the participant, over content only | `signature` |
+| "This is where it went" | the recorder, over the positioned event | `recorderSignature` |
 
 ```text
-hashingInput = JCS(event minus "eventHash" minus "signature")
+contentView  = event minus { logicalTime, previousEventHash, eventHash,
+                             signature, recorderSignature }
+signature    = Ed25519_participant("FREEQ-FOUNDRY-V1-EVENT\n"  + JCS(contentView))
+
+hashingInput = event minus { eventHash, recorderSignature }
 eventHash    = "sha256:" + hex(SHA-256(hashingInput))
 
-signingInput = "FREEQ-FOUNDRY-V1-EVENT\n" + JCS(event minus "signature")
-signature    = base64url(Ed25519(signingInput))
+recordView   = event minus { recorderSignature }
+recorderSignature
+             = Ed25519_recorder("FREEQ-FOUNDRY-V1-RECORD\n" + JCS(recordView))
 ```
 
-The hash covers everything but itself and the signature. The signature covers
-the hash, and therefore transitively covers `previousEventHash` and the entire
-chain behind it.
+Collapsing these into one signature would lose one of the claims. As it stands,
+attribution survives a dishonest platform and ordering survives a dishonest
+participant: forging what someone said and forging where it happened require two
+different keys.
+
+The participant signs content *only*, so the signature is stable wherever the
+event lands — which is what lets submission stay one-shot instead of needing a
+position reservation round-trip.
+
+`verifyEvent` requires the recorder DID and will not read it from the event, since
+an event that named its own recorder would let a forger name themselves. It comes
+from the run manifest (§53). Verification answers three separable questions:
+`contentAttested`, `hashValid`, `positionAttested`.
 
 Every signable payload type has its own domain-separation context
 ([ADR-0005](../../docs/adr/0005-signature-suite.md)), so a signature harvested in
@@ -106,9 +129,13 @@ Two attack shapes, two correct outcomes:
   now validates alone, but every later back-link fails. This cascade is the
   property that makes the chain tamper-evident rather than merely checksummed.
 
-An attacker holding one participant's key can forge one event but cannot make it
-fit the chain without rewriting everything after it — which needs every other
-participant's key.
+Escalating by key compromise:
+
+| Attacker holds | Result |
+| --- | --- |
+| Participant key | Content attests, position does not. Caught immediately. |
+| Recorder key | Can reposition, but cannot fabricate attributable content. |
+| Both keys | Forged event is internally perfect, but the *next* event still links to the hash of what used to be there. Caught by the chain. |
 
 ## Sequence semantics
 
@@ -119,7 +146,7 @@ loses the difference between a network fault and an attack.
 ## Testing
 
 ```bash
-pnpm test        # 86 tests
+pnpm test        # 93 tests
 pnpm typecheck   # strict, including test files
 pnpm build
 ```

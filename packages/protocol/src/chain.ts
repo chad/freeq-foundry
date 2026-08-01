@@ -12,7 +12,7 @@ import { ProtocolError, ProtocolErrorCode } from "./errors.js";
 import { computeEventHash } from "./event.js";
 import { GENESIS_HASH } from "./hash.js";
 import { verifyEvent } from "./event.js";
-import type { SignedEvent } from "./types.js";
+import type { RecordedEvent } from "./types.js";
 
 /**
  * Tracks per-participant sequence numbers for one run.
@@ -132,6 +132,14 @@ export interface VerifyChainOptions {
   readonly initialSequences?: ReadonlyMap<string, number>;
   /** Verify signatures as well as structure. Default true. */
   readonly verifySignatures?: boolean;
+  /**
+   * DID of the run's recorder, from the run manifest (§53).
+   *
+   * Without it, content attribution and chain integrity are still checked but
+   * the recorder's attestation of *position* is not — so a reordering by a
+   * dishonest recorder would go unnoticed (ADR-0008).
+   */
+  readonly recorderDid?: string;
   /** Stop at the first violation instead of collecting all. Default false. */
   readonly stopOnFirst?: boolean;
 }
@@ -144,7 +152,7 @@ export interface VerifyChainOptions {
  * canonicalizer. Events are expected in canonical append order.
  */
 export function verifyChain(
-  events: readonly SignedEvent[],
+  events: readonly RecordedEvent[],
   options: VerifyChainOptions = {},
 ): ChainVerification {
   const expectGenesis = options.expectGenesis ?? true;
@@ -300,7 +308,10 @@ export function verifyChain(
     }
 
     if (verifySignatures) {
-      const result = verifyEvent(event);
+      const result = verifyEvent(
+        event,
+        options.recorderDid === undefined ? {} : { recorderDid: options.recorderDid },
+      );
       if (!result.valid) {
         let stop = false;
         for (const error of result.errors) {

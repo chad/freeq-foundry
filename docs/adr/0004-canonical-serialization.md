@@ -1,8 +1,13 @@
 # ADR-0004: RFC 8785 JCS + SHA-256 for canonical bytes and hashes
 
-**Status:** Accepted
+**Status:** Accepted; superseded in part by [ADR-0008](0008-event-authorship.md)
 **Date:** 2026-02-19
-**Spec references:** [§33.1](../specification.md#331-canonical-event), [§33.4](../specification.md#334-event-ordering), [§33.5](../specification.md#335-hash-chain), [§33.6](../specification.md#336-event-schemas), [§35.4](../specification.md#354-artifact-storage), [§51.1](../specification.md#511-epic-protocol)
+**Spec references:** [§33.1](../specification.md#331-canonical-event)
+
+> The "What gets hashed and what gets signed" section below is superseded by
+> [ADR-0008](0008-event-authorship.md), which splits event signing into a
+> participant content attestation and a recorder position attestation. The
+> canonical-form and hashing rules are unchanged., [§33.4](../specification.md#334-event-ordering), [§33.5](../specification.md#335-hash-chain), [§33.6](../specification.md#336-event-schemas), [§35.4](../specification.md#354-artifact-storage), [§51.1](../specification.md#511-epic-protocol)
 
 ## Context
 
