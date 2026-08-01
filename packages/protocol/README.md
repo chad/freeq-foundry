@@ -146,7 +146,7 @@ loses the difference between a network fault and an attack.
 ## Testing
 
 ```bash
-pnpm test        # 93 tests
+pnpm test        # 224 tests
 pnpm typecheck   # strict, including test files
 pnpm build
 ```
@@ -158,6 +158,40 @@ anywhere — that is why this milestone comes first.
 `src/testing.ts` exports a deterministic test client: fixed keys from fixed
 seeds, fixed wall times, so the same script always produces the same bytes.
 
+## Conformance vectors
+
+[`vectors/index.json`](vectors/) is the operational definition of conformance, and
+[`vectors/README.md`](vectors/README.md) documents the format for implementers in
+other languages. Chain mutations are RFC 6902 patches rather than prose, so they
+can be applied mechanically instead of interpreted.
+
+A drift-guard test asserts the committed file equals a fresh build. Changes to
+canonical form, hashing, or a signing context invalidate every signature ever
+issued, so they must never happen by accident.
+
+```bash
+pnpm run vectors   # regenerate
+```
+
+## JSON Schema
+
+[`src/schema.ts`](src/schema.ts) publishes JSON Schema 2020-12 for the event
+envelope, both attestation stages, and the payload records of
+[§56](../../docs/specification.md#56-example-protocol-schemas), plus the
+machine-readable compatibility policy [§33.6](../../docs/specification.md#336-event-schemas)
+requires.
+
+The envelope is `additionalProperties: false` for a security reason, not a
+fastidious one: an unknown field would be covered by `eventHash` and therefore by
+both signatures, so tolerating it would mean attesting to content the verifier
+cannot interpret.
+
+Schemas are hand-written rather than generated. Generators emit schemas shaped by
+the type system's quirks rather than by the wire format, and cannot express the
+ADR-0004 restrictions — which are exactly what an external implementer needs
+stated. `schema.test.ts` validates the published vectors against the published
+schemas, so the two cannot drift.
+
 ## Cross-implementation verification
 
 Values asserted against external facts rather than against our own output:
@@ -168,6 +202,4 @@ Values asserted against external facts rather than against our own output:
 
 ## Status
 
-Implements issues #13, #14, #15, #16 of
-[Milestone 1](../../../../milestone/1). Not yet done: JSON Schema package (#17),
-event store (#18), published conformance vectors (#19), gateway (#21).
+Milestone 1 complete: #13, #14, #15, #16, #17, #19.

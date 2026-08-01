@@ -104,6 +104,41 @@ export type {
 } from "./types.js";
 
 export {
+  COMPATIBILITY_POLICY,
+  SCHEMA_BASE_URI,
+  SCHEMA_VERSION,
+  actionProvenanceSchema,
+  attributedEventSchema,
+  diagnosticFindingSchema,
+  eventCategorySchema,
+  modelInvocationRecordSchema,
+  participantTypeSchema,
+  recordedEventSchema,
+  schemaById,
+  schemas,
+  signedActionRequestSchema,
+  visibilityPolicySchema,
+  type JsonSchema,
+} from "./schema.js";
+
+export {
+  PROTOCOL_ID,
+  VECTOR_FORMAT_VERSION,
+  applyPatches,
+  buildVectorSet,
+  type CanonicalVector,
+  type ChainVector,
+  type DidKeyVector,
+  type DigestVector,
+  type InvalidConstructedVector,
+  type InvalidDidVector,
+  type InvalidJsonVector,
+  type Patch,
+  type SigningVector,
+  type VectorSet,
+} from "./vectors.js";
+
+export {
   CONFIRMATORY_MIN_VERIFICATION_LEVEL,
   DEFAULT_HORIZON_MS,
   MAX_SECONDARY_METRICS,

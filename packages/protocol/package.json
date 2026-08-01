@@ -9,22 +9,29 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./vectors": "./vectors/index.json"
+    "./vectors": "./vectors/index.json",
+    "./schemas": "./dist/schema.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "vectors"],
+  "files": [
+    "dist",
+    "vectors"
+  ],
   "engines": {
     "node": ">=20.11.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "vectors": "tsx scripts/generate-vectors.ts"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^3.2.6"
   }

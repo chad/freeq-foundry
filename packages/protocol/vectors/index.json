@@ -1,0 +1,755 @@
+{
+  "formatVersion": 1,
+  "protocol": "freeq-foundry/v1",
+  "generatedBy": "@freeq-foundry/protocol",
+  "canonicalization": {
+    "valid": [
+      {
+        "name": "empty-object",
+        "inputJson": "{}",
+        "canonical": "{}",
+        "canonicalHex": "7b7d",
+        "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+        "name": "empty-array",
+        "inputJson": "[]",
+        "canonical": "[]",
+        "canonicalHex": "5b5d",
+        "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "key-ordering",
+        "note": "Keys sort by UTF-16 code unit.",
+        "inputJson": "{\"b\":1,\"a\":2,\"c\":3}",
+        "canonical": "{\"a\":2,\"b\":1,\"c\":3}",
+        "canonicalHex": "7b2261223a322c2262223a312c2263223a337d",
+        "digest": "sha256:e145110e712e3ed0a6b233551b27a90aa39b4c93ed67e111ba2002d16e5ed1fa"
+      },
+      {
+        "name": "key-ordering-case",
+        "note": "Uppercase precedes lowercase, so this is not alphabetical order.",
+        "inputJson": "{\"a\":1,\"A\":2}",
+        "canonical": "{\"A\":2,\"a\":1}",
+        "canonicalHex": "7b2241223a322c2261223a317d",
+        "digest": "sha256:a166305513c7b0cbb7a16b969b021e6e05d91d5f56fa3d8b7d7e2d1232811c68"
+      },
+      {
+        "name": "key-ordering-mixed",
+        "note": "\\n=10, '1'=49, 'a'=97, '\\u20ac'=8364.",
+        "inputJson": "{\"\\u20ac\":1,\"\\n\":2,\"a\":3,\"1\":4}",
+        "canonical": "{\"\\n\":2,\"1\":4,\"a\":3,\"€\":1}",
+        "canonicalHex": "7b225c6e223a322c2231223a342c2261223a332c22e282ac223a317d",
+        "digest": "sha256:7f24b2d10817202fdca3679397c314b9aa48afdbe7554ae5f5af348cf445e41d"
+      },
+      {
+        "name": "nested-objects-sort-independently",
+        "inputJson": "{\"z\":{\"b\":1,\"a\":2},\"a\":3}",
+        "canonical": "{\"a\":3,\"z\":{\"a\":2,\"b\":1}}",
+        "canonicalHex": "7b2261223a332c227a223a7b2261223a322c2262223a317d7d",
+        "digest": "sha256:c2438635795c82ca61e79ff7d3296a32531ab55ea2e02178ecb8a9ec064f538f"
+      },
+      {
+        "name": "array-order-preserved",
+        "inputJson": "[3,1,2]",
+        "canonical": "[3,1,2]",
+        "canonicalHex": "5b332c312c325d",
+        "digest": "sha256:51bda7ab4e44726cde71fcb6e4b515357059bb6b6dd5146d1fc50f73f11678c6"
+      },
+      {
+        "name": "whitespace-removed",
+        "inputJson": "{ \"a\" : [ 1 , 2 ] }",
+        "canonical": "{\"a\":[1,2]}",
+        "canonicalHex": "7b2261223a5b312c325d7d",
+        "digest": "sha256:01530d164d479cf08e26d3b1ad9bdba927120d97e2d057a6d792db778780d720"
+      },
+      {
+        "name": "booleans",
+        "inputJson": "{\"t\":true,\"f\":false}",
+        "canonical": "{\"f\":false,\"t\":true}",
+        "canonicalHex": "7b2266223a66616c73652c2274223a747275657d",
+        "digest": "sha256:c22848c47426fcf4d27e55573c22f1d23546315c251e8e4bc384820ba5fae568"
+      },
+      {
+        "name": "negative-integer",
+        "inputJson": "{\"n\":-42}",
+        "canonical": "{\"n\":-42}",
+        "canonicalHex": "7b226e223a2d34327d",
+        "digest": "sha256:fbd5ac2f42479228ed2d3b495816fbda98a9cb9d71d523869a37e784790e9f2c"
+      },
+      {
+        "name": "zero",
+        "inputJson": "{\"n\":0}",
+        "canonical": "{\"n\":0}",
+        "canonicalHex": "7b226e223a307d",
+        "digest": "sha256:f3013f933b9fb80ab6d995e7ad9da36f683837ba1d81e950c943d40111eac2f0"
+      },
+      {
+        "name": "large-safe-integer",
+        "inputJson": "{\"n\":9007199254740991}",
+        "canonical": "{\"n\":9007199254740991}",
+        "canonicalHex": "7b226e223a393030373139393235343734303939317d",
+        "digest": "sha256:e1da48c6a6089f06ecb4e0a2259e658e3786b2420f52baccdf929ec6460d7b41"
+      },
+      {
+        "name": "control-characters",
+        "note": "Short escapes for \\b \\t \\n \\f \\r; other controls as lowercase \\u00xx.",
+        "inputJson": "{\"s\":\"\\u0001\\t\\n\\\"\\\\\"}",
+        "canonical": "{\"s\":\"\\u0001\\t\\n\\\"\\\\\"}",
+        "canonicalHex": "7b2273223a225c75303030315c745c6e5c225c5c227d",
+        "digest": "sha256:02f5ee27a9b6a89a671488dc6117f5ebbfd51959ad569b30012be3c6b5d49313"
+      },
+      {
+        "name": "non-ascii-literal",
+        "note": "Non-ASCII passes through as UTF-8, not as escapes.",
+        "inputJson": "{\"s\":\"\\u65e5\\u672c\\u8a9e caf\\u00e9\"}",
+        "canonical": "{\"s\":\"日本語 café\"}",
+        "canonicalHex": "7b2273223a22e697a5e69cace8aa9e20636166c3a9227d",
+        "digest": "sha256:546a122d6ecd32da01a52648090299e925166c28199c52a92d4e518613fab33e"
+      },
+      {
+        "name": "surrogate-pair",
+        "note": "A valid pair is fine; lone surrogates are not.",
+        "inputJson": "{\"s\":\"\\ud83d\\ude00\"}",
+        "canonical": "{\"s\":\"😀\"}",
+        "canonicalHex": "7b2273223a22f09f9880227d",
+        "digest": "sha256:f9949e1006d1ca22bc0b60ea94f09779f11a8f0a29bae250fc7ab313d879f5e7"
+      },
+      {
+        "name": "nfc-composed",
+        "note": "Composed and decomposed forms MUST produce identical output.",
+        "inputJson": "{\"s\":\"\\u00e9\"}",
+        "canonical": "{\"s\":\"é\"}",
+        "canonicalHex": "7b2273223a22c3a9227d",
+        "digest": "sha256:86028b41ba792eaf82aa26a45b218f6734f7f1096a86f1746c8296e088a0ccb4"
+      },
+      {
+        "name": "nfc-decomposed",
+        "inputJson": "{\"s\":\"e\\u0301\"}",
+        "canonical": "{\"s\":\"é\"}",
+        "canonicalHex": "7b2273223a22c3a9227d",
+        "digest": "sha256:86028b41ba792eaf82aa26a45b218f6734f7f1096a86f1746c8296e088a0ccb4"
+      },
+      {
+        "name": "deep-nesting",
+        "inputJson": "{\"a\":{\"b\":{\"c\":{\"d\":[1,2,{\"e\":true}]}}}}",
+        "canonical": "{\"a\":{\"b\":{\"c\":{\"d\":[1,2,{\"e\":true}]}}}}",
+        "canonicalHex": "7b2261223a7b2262223a7b2263223a7b2264223a5b312c322c7b2265223a747275657d5d7d7d7d7d",
+        "digest": "sha256:6f54b199cafe5b53d06d17ae3453855924a3034002e1ba63c1d1ca94510b9b0a"
+      }
+    ],
+    "invalidJson": [
+      {
+        "name": "non-integer-number",
+        "note": "Encode non-integers as strings with a documented unit.",
+        "inputJson": "{\"n\":1.5}",
+        "errorCode": "NON_INTEGER_NUMBER"
+      },
+      {
+        "name": "unsafe-integer",
+        "inputJson": "{\"n\":9007199254740992}",
+        "errorCode": "UNSAFE_INTEGER"
+      },
+      {
+        "name": "explicit-null",
+        "note": "Omit the field instead of emitting null.",
+        "inputJson": "{\"a\":null}",
+        "errorCode": "UNEXPECTED_NULL"
+      },
+      {
+        "name": "duplicate-key",
+        "note": "Must be rejected at parse time, not silently last-wins.",
+        "inputJson": "{\"a\":1,\"a\":2}",
+        "errorCode": "DUPLICATE_KEY"
+      },
+      {
+        "name": "nfc-colliding-keys",
+        "note": "Distinct keys that collide after NFC normalization.",
+        "inputJson": "{\"\\u00e9\":1,\"e\\u0301\":2}",
+        "errorCode": "DUPLICATE_KEY"
+      }
+    ],
+    "invalidConstructed": [
+      {
+        "name": "nan",
+        "directive": "nan",
+        "description": "A number field whose value is NaN.",
+        "errorCode": "NON_FINITE_NUMBER"
+      },
+      {
+        "name": "positive-infinity",
+        "directive": "positive-infinity",
+        "description": "A number field whose value is positive infinity.",
+        "errorCode": "NON_FINITE_NUMBER"
+      },
+      {
+        "name": "undefined-array-element",
+        "directive": "undefined-array-element",
+        "description": "An array containing a language-level absent value. Omitting it would shift later indices and silently change meaning.",
+        "errorCode": "UNSUPPORTED_TYPE"
+      },
+      {
+        "name": "lone-high-surrogate",
+        "directive": "lone-high-surrogate",
+        "description": "A string containing U+D800 with no following low surrogate.",
+        "errorCode": "LONE_SURROGATE"
+      },
+      {
+        "name": "lone-low-surrogate",
+        "directive": "lone-low-surrogate",
+        "description": "A string containing U+DC00 with no preceding high surrogate.",
+        "errorCode": "LONE_SURROGATE"
+      }
+    ]
+  },
+  "digests": [
+    {
+      "name": "empty-string",
+      "inputUtf8": "",
+      "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "abc",
+      "inputUtf8": "abc",
+      "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    },
+    {
+      "name": "euro-sign",
+      "inputUtf8": "€",
+      "digest": "sha256:c4cc90ed3d26f12d4b08a75140970a7904035c31cbb4515a83f19b9003c00d1d"
+    }
+  ],
+  "didKey": {
+    "valid": [
+      {
+        "name": "seed-all-0x00",
+        "seedHex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "publicKeyHex": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+        "did": "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp"
+      },
+      {
+        "name": "seed-all-0x01",
+        "seedHex": "0101010101010101010101010101010101010101010101010101010101010101",
+        "publicKeyHex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+      },
+      {
+        "name": "seed-all-0x03",
+        "seedHex": "0303030303030303030303030303030303030303030303030303030303030303",
+        "publicKeyHex": "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1",
+        "did": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
+      },
+      {
+        "name": "seed-all-0x07",
+        "seedHex": "0707070707070707070707070707070707070707070707070707070707070707",
+        "publicKeyHex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "did": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z"
+      },
+      {
+        "name": "seed-all-0xff",
+        "seedHex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "publicKeyHex": "76a1592044a6e4f511265bca73a604d90b0529d1df602be30a19a9257660d1f5",
+        "did": "did:key:z6MknSLrJoTcukLrE435hVNQT4JUhbvWLX4kUzqkEStBU8Vi"
+      }
+    ],
+    "invalid": [
+      {
+        "name": "not-a-did",
+        "did": "nonsense",
+        "errorCode": "INVALID_DID"
+      },
+      {
+        "name": "unsupported-method",
+        "did": "did:web:example.com",
+        "errorCode": "UNSUPPORTED_DID_METHOD"
+      },
+      {
+        "name": "wrong-multibase-prefix",
+        "did": "did:key:mAAAA",
+        "errorCode": "INVALID_DID"
+      },
+      {
+        "name": "base58-alphabet-violation",
+        "did": "did:key:z0OIl",
+        "errorCode": "INVALID_BASE58"
+      }
+    ]
+  },
+  "signing": {
+    "contexts": {
+      "EVENT": "FREEQ-FOUNDRY-V1-EVENT\n",
+      "RECORD": "FREEQ-FOUNDRY-V1-RECORD\n",
+      "ACTION": "FREEQ-FOUNDRY-V1-ACTION\n",
+      "HUMAN_ROOT": "FREEQ-FOUNDRY-V1-HUMAN-ROOT\n",
+      "AGENT_CREATION": "FREEQ-FOUNDRY-V1-AGENT-CREATION\n",
+      "TOOL_EXEC": "FREEQ-FOUNDRY-V1-TOOL-EXEC\n",
+      "EVALUATION": "FREEQ-FOUNDRY-V1-EVALUATION\n",
+      "CHALLENGE": "FREEQ-FOUNDRY-V1-CHALLENGE\n",
+      "REVOCATION": "FREEQ-FOUNDRY-V1-REVOCATION\n"
+    },
+    "vectors": [
+      {
+        "name": "event-simple",
+        "kind": "EVENT",
+        "context": "FREEQ-FOUNDRY-V1-EVENT\n",
+        "seedHex": "0101010101010101010101010101010101010101010101010101010101010101",
+        "did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "payloadJson": "{\"a\":1,\"b\":\"two\"}",
+        "signingInputHex": "46524545512d464f554e4452592d56312d4556454e540a7b2261223a312c2262223a2274776f227d",
+        "signature": "C_KlITVNLUI4L6yoBS8Qau7lkAJ7p9lXu682QojsCZ9OQsBpUA0xBN539pBI9oq3ExDK5sxa1GqljCYqRxnIDw"
+      },
+      {
+        "name": "event-nested",
+        "kind": "EVENT",
+        "context": "FREEQ-FOUNDRY-V1-EVENT\n",
+        "seedHex": "0202020202020202020202020202020202020202020202020202020202020202",
+        "did": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "payloadJson": "{\"x\":{\"b\":1,\"a\":2},\"y\":[1,2,3]}",
+        "signingInputHex": "46524545512d464f554e4452592d56312d4556454e540a7b2278223a7b2261223a322c2262223a317d2c2279223a5b312c322c335d7d",
+        "signature": "k4iHJgYEonqziiVtq895C03V8pN0oV4JF5FGNrSkMJZ_mPNmA5cMJDjIV45eHGBGP8sDG78HhLiqGuLH2XLCBQ"
+      },
+      {
+        "name": "action",
+        "kind": "ACTION",
+        "context": "FREEQ-FOUNDRY-V1-ACTION\n",
+        "seedHex": "0303030303030303030303030303030303030303030303030303030303030303",
+        "did": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+        "payloadJson": "{\"actionType\":\"vote\",\"proposalId\":\"p-1\"}",
+        "signingInputHex": "46524545512d464f554e4452592d56312d414354494f4e0a7b22616374696f6e54797065223a22766f7465222c2270726f706f73616c4964223a22702d31227d",
+        "signature": "DybqL6wO05epq0dTNALg93mqth5MI95-Y0hZXXTwOl2ELrZ8ALY153_OfNqbEBatGAY2NsiWFnRTK5MDdnTtCQ"
+      },
+      {
+        "name": "record",
+        "kind": "RECORD",
+        "context": "FREEQ-FOUNDRY-V1-RECORD\n",
+        "seedHex": "0404040404040404040404040404040404040404040404040404040404040404",
+        "did": "did:key:z6Mkt6316e2PN3mZdB6N9CrzomJYUd1s5yBZi1XYHmwT9TUP",
+        "payloadJson": "{\"eventHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"}",
+        "signingInputHex": "46524545512d464f554e4452592d56312d5245434f52440a7b226576656e7448617368223a227368613235363a30303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030227d",
+        "signature": "y_Avq40O_N0fPMgJUfa9nJskCAYNLa2up4esu8HZZZNKbFXG3mRfLHJONo-Lum6w0vMTWHvA8Vjf6r2eNOw0Bg"
+      },
+      {
+        "name": "human-root",
+        "kind": "HUMAN_ROOT",
+        "context": "FREEQ-FOUNDRY-V1-HUMAN-ROOT\n",
+        "seedHex": "0505050505050505050505050505050505050505050505050505050505050505",
+        "did": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
+        "payloadJson": "{\"subjectDid\":\"did:key:zExample\"}",
+        "signingInputHex": "46524545512d464f554e4452592d56312d48554d414e2d524f4f540a7b227375626a656374446964223a226469643a6b65793a7a4578616d706c65227d",
+        "signature": "B2dlHYjccTm9s19Chx60jdd5zkKEpW-cYRii6vBs2tmg3jOAsWSEu3RzUqp_PB2E_wpeIWyDF1ADkveSWby3BQ"
+      },
+      {
+        "name": "agent-creation",
+        "kind": "AGENT_CREATION",
+        "context": "FREEQ-FOUNDRY-V1-AGENT-CREATION\n",
+        "seedHex": "0606060606060606060606060606060606060606060606060606060606060606",
+        "did": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "payloadJson": "{\"relationship\":\"created\"}",
+        "signingInputHex": "46524545512d464f554e4452592d56312d4147454e542d4352454154494f4e0a7b2272656c6174696f6e73686970223a2263726561746564227d",
+        "signature": "KR_LhONYBqpSSBOgJ4FZ0308bn66m0itVVlBAJpFPPGr7heO5xWEW9xcN9FP2XpmDJ-j0tRV3RXibLA0hv3EAg"
+      },
+      {
+        "name": "tool-exec",
+        "kind": "TOOL_EXEC",
+        "context": "FREEQ-FOUNDRY-V1-TOOL-EXEC\n",
+        "seedHex": "0707070707070707070707070707070707070707070707070707070707070707",
+        "did": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+        "payloadJson": "{\"toolName\":\"repo.commit\"}",
+        "signingInputHex": "46524545512d464f554e4452592d56312d544f4f4c2d455845430a7b22746f6f6c4e616d65223a227265706f2e636f6d6d6974227d",
+        "signature": "KZZhpNa3cnWmAdkn8CNhALD8G8IOzvrdsH5lv8JmhJHPMJVFhRT_BDJDtijiiePKINBg7kDPuf8Gc1MnaLanDg"
+      },
+      {
+        "name": "evaluation",
+        "kind": "EVALUATION",
+        "context": "FREEQ-FOUNDRY-V1-EVALUATION\n",
+        "seedHex": "0808080808080808080808080808080808080808080808080808080808080808",
+        "did": "did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P",
+        "payloadJson": "{\"passed\":true}",
+        "signingInputHex": "46524545512d464f554e4452592d56312d4556414c554154494f4e0a7b22706173736564223a747275657d",
+        "signature": "ialMxW__XDDUnZR8rpWLwwQWVmtUESSOAMhID814593cnZoDVyWMEEDPel0iyq_eH7ZjlZAbPszrxkMOGd58Bg"
+      },
+      {
+        "name": "challenge",
+        "kind": "CHALLENGE",
+        "context": "FREEQ-FOUNDRY-V1-CHALLENGE\n",
+        "seedHex": "0909090909090909090909090909090909090909090909090909090909090909",
+        "did": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "payloadJson": "{\"nonce\":\"abc123\"}",
+        "signingInputHex": "46524545512d464f554e4452592d56312d4348414c4c454e47450a7b226e6f6e6365223a22616263313233227d",
+        "signature": "wvBMz7ljn9MiVrnII60LD-MRo2dFjzGYZROMYai8BT8IYwZ3q282IGrcmKNpJJMJRAOs-nBZmKf9A4T-3d1yDw"
+      },
+      {
+        "name": "revocation",
+        "kind": "REVOCATION",
+        "context": "FREEQ-FOUNDRY-V1-REVOCATION\n",
+        "seedHex": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "did": "did:key:z6Mkj1MDZKcfx9AX5CeXHdysiGkRLzBbALyFuShD6wNeY1E3",
+        "payloadJson": "{\"reasonCode\":\"key_compromise\"}",
+        "signingInputHex": "46524545512d464f554e4452592d56312d5245564f434154494f4e0a7b22726561736f6e436f6465223a226b65795f636f6d70726f6d697365227d",
+        "signature": "gTdEc3nTKGnSCvFDaC3iprF6lcoa2smWASEN0DKOsZC47MiIaqehmOMZV6uuQVW-M1JPziCQpAmoRIqvLr5JDQ"
+      }
+    ],
+    "crossContextMustFail": true
+  },
+  "events": {
+    "genesisHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "recorderDid": "did:key:z6MkhKaBf74ovUDYi5d3vcJUQtic7tBVXjaVPnFs3yzeVAMV",
+    "runId": "run-vectors-001",
+    "events": [
+      {
+        "eventId": "run-vectors-001-000000",
+        "runId": "run-vectors-001",
+        "eventType": "run.started",
+        "schemaVersion": 1,
+        "actorDid": "did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx",
+        "participantType": "controller",
+        "participantSequence": 1,
+        "wallTime": "2026-01-01T00:00:00.000Z",
+        "payload": {
+          "scenarioId": "webhook-saas-v1",
+          "scenarioVersion": 1
+        },
+        "visibility": {
+          "type": "public"
+        },
+        "references": [],
+        "provenance": {
+          "signerDid": "did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx",
+          "terminalHumanDids": [
+            "did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx"
+          ],
+          "provenancePathHashes": [],
+          "admissionCredentialId": "adm-MD5MjePx",
+          "directInstructionEventIds": [],
+          "governanceAuthorizationIds": [],
+          "capabilityGrantIds": []
+        },
+        "signature": "DmlafAlG38c1fCmgJTwUo96-1VdtIyNfIa14BTjbV7B7KgB5xPrd2Ya1eXIvBUyMPv2PgGAquYmiGR8ZF5m5DA",
+        "logicalTime": 0,
+        "previousEventHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "eventHash": "sha256:37355dd245f8d03bd2d62e851095c5c30b4f2818cad99335a3060954864ed7fa",
+        "recorderSignature": "xGUkGb9YuPIoxOCk1Oe2pm8fCpIFqZuHcPt1QvnPNM4I7QOSFu1v9nT9nRus9GemxTYIoFtmL-Oa6h52RTSrCA"
+      },
+      {
+        "eventId": "run-vectors-001-000001",
+        "runId": "run-vectors-001",
+        "eventType": "participant.admitted",
+        "schemaVersion": 1,
+        "actorDid": "did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC",
+        "participantType": "agent",
+        "participantSequence": 1,
+        "wallTime": "2026-01-01T00:00:01.000Z",
+        "payload": {
+          "did": "did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC"
+        },
+        "visibility": {
+          "type": "public"
+        },
+        "references": [],
+        "provenance": {
+          "signerDid": "did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC",
+          "terminalHumanDids": [
+            "did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC"
+          ],
+          "provenancePathHashes": [],
+          "admissionCredentialId": "adm-LiiSKVAC",
+          "directInstructionEventIds": [],
+          "governanceAuthorizationIds": [],
+          "capabilityGrantIds": []
+        },
+        "signature": "W5yUZxe9gk4UwHLNPiwtxxuAo5BH5SheIQMujwfeDyxqhccw43OjvqfLAOPlYxezDKrzoC2Cymdyyol6_ua_BQ",
+        "logicalTime": 1,
+        "previousEventHash": "sha256:37355dd245f8d03bd2d62e851095c5c30b4f2818cad99335a3060954864ed7fa",
+        "eventHash": "sha256:c560978a641eaaba481f90e7fda2b399c0f0f0c189f2c3f5e6d27aff934c5b48",
+        "recorderSignature": "rCFzwdXj6aKUzIT6a0djSHLrCgF5HwcLh7v-SyZIU0X2DOw1HcX6LL7Gto2kSM_xr47xyX110-QULEyLnwa-Ag"
+      },
+      {
+        "eventId": "run-vectors-001-000002",
+        "runId": "run-vectors-001",
+        "eventType": "participant.admitted",
+        "schemaVersion": 1,
+        "actorDid": "did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm",
+        "participantType": "agent",
+        "participantSequence": 1,
+        "wallTime": "2026-01-01T00:00:02.000Z",
+        "payload": {
+          "did": "did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm"
+        },
+        "visibility": {
+          "type": "public"
+        },
+        "references": [],
+        "provenance": {
+          "signerDid": "did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm",
+          "terminalHumanDids": [
+            "did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm"
+          ],
+          "provenancePathHashes": [],
+          "admissionCredentialId": "adm-7aGH5mSm",
+          "directInstructionEventIds": [],
+          "governanceAuthorizationIds": [],
+          "capabilityGrantIds": []
+        },
+        "signature": "99pZrnJW-sdD7tWWaRyb5Unm4HKXN11S2wldt4LrmQv2vBrOpzlA9lUH25XTcRI7tKaGACIvCTH2QgBRWUACDQ",
+        "logicalTime": 2,
+        "previousEventHash": "sha256:c560978a641eaaba481f90e7fda2b399c0f0f0c189f2c3f5e6d27aff934c5b48",
+        "eventHash": "sha256:0f9787eac766707f6ba483459bba6957e470b42a31894e67dc2accd0c3eebcc3",
+        "recorderSignature": "gSqXAV7KkY33_qGsOInWzvh-G78hxtt03FTFzf-LMUke1bDoH2Byj1lQPx8I1nZFcdul1_eAAugFl0udBdtSBQ"
+      },
+      {
+        "eventId": "run-vectors-001-000003",
+        "runId": "run-vectors-001",
+        "eventType": "channel.message",
+        "schemaVersion": 1,
+        "actorDid": "did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC",
+        "participantType": "agent",
+        "participantSequence": 2,
+        "wallTime": "2026-01-01T00:00:03.000Z",
+        "payload": {
+          "channelId": "genesis",
+          "text": "Proposing we elect a release manager."
+        },
+        "visibility": {
+          "type": "public"
+        },
+        "references": [],
+        "provenance": {
+          "signerDid": "did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC",
+          "terminalHumanDids": [
+            "did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC"
+          ],
+          "provenancePathHashes": [],
+          "admissionCredentialId": "adm-LiiSKVAC",
+          "directInstructionEventIds": [],
+          "governanceAuthorizationIds": [],
+          "capabilityGrantIds": []
+        },
+        "signature": "lefLYa4uvsbgjjtsprUM8Gi-LDv5v9_1-a_GrE35ffNgfHyzxIIZ2OMIgA4MkVQG_S-isCWdeCFaV1G-4pnEBw",
+        "logicalTime": 3,
+        "previousEventHash": "sha256:0f9787eac766707f6ba483459bba6957e470b42a31894e67dc2accd0c3eebcc3",
+        "eventHash": "sha256:8b6e9654a727f86211b1f80b0335354e301d5026cb0ecf6af8fa4b4498e158a2",
+        "recorderSignature": "di39ZT52LRol6EUc4uKywNAiD80pZx2sql1H61cW0iB4qB9dJXtLIdO_dDdAtCwSLRCsIv6fAe0dq_QYCOKAAw"
+      },
+      {
+        "eventId": "run-vectors-001-000004",
+        "runId": "run-vectors-001",
+        "eventType": "channel.message",
+        "schemaVersion": 1,
+        "actorDid": "did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm",
+        "participantType": "agent",
+        "participantSequence": 2,
+        "wallTime": "2026-01-01T00:00:04.000Z",
+        "payload": {
+          "channelId": "genesis",
+          "text": "Seconded."
+        },
+        "visibility": {
+          "type": "public"
+        },
+        "references": [],
+        "provenance": {
+          "signerDid": "did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm",
+          "terminalHumanDids": [
+            "did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm"
+          ],
+          "provenancePathHashes": [],
+          "admissionCredentialId": "adm-7aGH5mSm",
+          "directInstructionEventIds": [],
+          "governanceAuthorizationIds": [],
+          "capabilityGrantIds": []
+        },
+        "signature": "-uIq7AjmkJozQjYtapaaCXSJjpmDdDkn6BhElLO4bMLx8TYxCWxbBXOpt3HbZoX93YFBP9OfJKv8frqJJvfYCg",
+        "logicalTime": 4,
+        "previousEventHash": "sha256:8b6e9654a727f86211b1f80b0335354e301d5026cb0ecf6af8fa4b4498e158a2",
+        "eventHash": "sha256:eeb10728b72b910d6fcebb9d3f106efc4e0e0337d80ff78cd9615467b5c97283",
+        "recorderSignature": "7DJwiWjiFvkqHoI6_ck_3ouWDPJL7p1M4x1fx6WikIHqF-VdJLZn5rdTLVv2_cgAu4DtWfIyqfDMNb1OgyGfAw"
+      },
+      {
+        "eventId": "run-vectors-001-000005",
+        "runId": "run-vectors-001",
+        "eventType": "run.checkpoint",
+        "schemaVersion": 1,
+        "actorDid": "did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx",
+        "participantType": "controller",
+        "participantSequence": 2,
+        "wallTime": "2026-01-01T00:00:05.000Z",
+        "payload": {
+          "note": "bootstrap complete"
+        },
+        "visibility": {
+          "type": "controller"
+        },
+        "references": [],
+        "provenance": {
+          "signerDid": "did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx",
+          "terminalHumanDids": [
+            "did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx"
+          ],
+          "provenancePathHashes": [],
+          "admissionCredentialId": "adm-MD5MjePx",
+          "directInstructionEventIds": [],
+          "governanceAuthorizationIds": [],
+          "capabilityGrantIds": []
+        },
+        "signature": "zI5HeBM5mpor4Bp5OcOMInDANxR1Oe8a6qSLiq4EPFAqUtNeF2pHAeru2MD1-Z5-FceSbrCMljqiLno2AU-JAA",
+        "logicalTime": 5,
+        "previousEventHash": "sha256:eeb10728b72b910d6fcebb9d3f106efc4e0e0337d80ff78cd9615467b5c97283",
+        "eventHash": "sha256:1d4a05098a1f996fb4bd63db0c2d963228b2ce092cc37fb51ac8a28b653adb69",
+        "recorderSignature": "EpGQKT-rgdA7G0RSZcK9TgpTBlItjbFyfL_6rYW7VhK88C8KAlq4o_C7MQrWOMSj0watTjcPS0cDLDyFGKUdCQ"
+      }
+    ],
+    "ndjson": "{\"eventId\":\"run-vectors-001-000000\",\"runId\":\"run-vectors-001\",\"eventType\":\"run.started\",\"schemaVersion\":1,\"actorDid\":\"did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx\",\"participantType\":\"controller\",\"participantSequence\":1,\"wallTime\":\"2026-01-01T00:00:00.000Z\",\"payload\":{\"scenarioId\":\"webhook-saas-v1\",\"scenarioVersion\":1},\"visibility\":{\"type\":\"public\"},\"references\":[],\"provenance\":{\"signerDid\":\"did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx\",\"terminalHumanDids\":[\"did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx\"],\"provenancePathHashes\":[],\"admissionCredentialId\":\"adm-MD5MjePx\",\"directInstructionEventIds\":[],\"governanceAuthorizationIds\":[],\"capabilityGrantIds\":[]},\"signature\":\"DmlafAlG38c1fCmgJTwUo96-1VdtIyNfIa14BTjbV7B7KgB5xPrd2Ya1eXIvBUyMPv2PgGAquYmiGR8ZF5m5DA\",\"logicalTime\":0,\"previousEventHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"eventHash\":\"sha256:37355dd245f8d03bd2d62e851095c5c30b4f2818cad99335a3060954864ed7fa\",\"recorderSignature\":\"xGUkGb9YuPIoxOCk1Oe2pm8fCpIFqZuHcPt1QvnPNM4I7QOSFu1v9nT9nRus9GemxTYIoFtmL-Oa6h52RTSrCA\"}\n{\"eventId\":\"run-vectors-001-000001\",\"runId\":\"run-vectors-001\",\"eventType\":\"participant.admitted\",\"schemaVersion\":1,\"actorDid\":\"did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC\",\"participantType\":\"agent\",\"participantSequence\":1,\"wallTime\":\"2026-01-01T00:00:01.000Z\",\"payload\":{\"did\":\"did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC\"},\"visibility\":{\"type\":\"public\"},\"references\":[],\"provenance\":{\"signerDid\":\"did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC\",\"terminalHumanDids\":[\"did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC\"],\"provenancePathHashes\":[],\"admissionCredentialId\":\"adm-LiiSKVAC\",\"directInstructionEventIds\":[],\"governanceAuthorizationIds\":[],\"capabilityGrantIds\":[]},\"signature\":\"W5yUZxe9gk4UwHLNPiwtxxuAo5BH5SheIQMujwfeDyxqhccw43OjvqfLAOPlYxezDKrzoC2Cymdyyol6_ua_BQ\",\"logicalTime\":1,\"previousEventHash\":\"sha256:37355dd245f8d03bd2d62e851095c5c30b4f2818cad99335a3060954864ed7fa\",\"eventHash\":\"sha256:c560978a641eaaba481f90e7fda2b399c0f0f0c189f2c3f5e6d27aff934c5b48\",\"recorderSignature\":\"rCFzwdXj6aKUzIT6a0djSHLrCgF5HwcLh7v-SyZIU0X2DOw1HcX6LL7Gto2kSM_xr47xyX110-QULEyLnwa-Ag\"}\n{\"eventId\":\"run-vectors-001-000002\",\"runId\":\"run-vectors-001\",\"eventType\":\"participant.admitted\",\"schemaVersion\":1,\"actorDid\":\"did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm\",\"participantType\":\"agent\",\"participantSequence\":1,\"wallTime\":\"2026-01-01T00:00:02.000Z\",\"payload\":{\"did\":\"did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm\"},\"visibility\":{\"type\":\"public\"},\"references\":[],\"provenance\":{\"signerDid\":\"did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm\",\"terminalHumanDids\":[\"did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm\"],\"provenancePathHashes\":[],\"admissionCredentialId\":\"adm-7aGH5mSm\",\"directInstructionEventIds\":[],\"governanceAuthorizationIds\":[],\"capabilityGrantIds\":[]},\"signature\":\"99pZrnJW-sdD7tWWaRyb5Unm4HKXN11S2wldt4LrmQv2vBrOpzlA9lUH25XTcRI7tKaGACIvCTH2QgBRWUACDQ\",\"logicalTime\":2,\"previousEventHash\":\"sha256:c560978a641eaaba481f90e7fda2b399c0f0f0c189f2c3f5e6d27aff934c5b48\",\"eventHash\":\"sha256:0f9787eac766707f6ba483459bba6957e470b42a31894e67dc2accd0c3eebcc3\",\"recorderSignature\":\"gSqXAV7KkY33_qGsOInWzvh-G78hxtt03FTFzf-LMUke1bDoH2Byj1lQPx8I1nZFcdul1_eAAugFl0udBdtSBQ\"}\n{\"eventId\":\"run-vectors-001-000003\",\"runId\":\"run-vectors-001\",\"eventType\":\"channel.message\",\"schemaVersion\":1,\"actorDid\":\"did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC\",\"participantType\":\"agent\",\"participantSequence\":2,\"wallTime\":\"2026-01-01T00:00:03.000Z\",\"payload\":{\"channelId\":\"genesis\",\"text\":\"Proposing we elect a release manager.\"},\"visibility\":{\"type\":\"public\"},\"references\":[],\"provenance\":{\"signerDid\":\"did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC\",\"terminalHumanDids\":[\"did:key:z6MkgEent6eDPNFMDkMTL34f6ohJXS5CYPrRKrj1LiiSKVAC\"],\"provenancePathHashes\":[],\"admissionCredentialId\":\"adm-LiiSKVAC\",\"directInstructionEventIds\":[],\"governanceAuthorizationIds\":[],\"capabilityGrantIds\":[]},\"signature\":\"lefLYa4uvsbgjjtsprUM8Gi-LDv5v9_1-a_GrE35ffNgfHyzxIIZ2OMIgA4MkVQG_S-isCWdeCFaV1G-4pnEBw\",\"logicalTime\":3,\"previousEventHash\":\"sha256:0f9787eac766707f6ba483459bba6957e470b42a31894e67dc2accd0c3eebcc3\",\"eventHash\":\"sha256:8b6e9654a727f86211b1f80b0335354e301d5026cb0ecf6af8fa4b4498e158a2\",\"recorderSignature\":\"di39ZT52LRol6EUc4uKywNAiD80pZx2sql1H61cW0iB4qB9dJXtLIdO_dDdAtCwSLRCsIv6fAe0dq_QYCOKAAw\"}\n{\"eventId\":\"run-vectors-001-000004\",\"runId\":\"run-vectors-001\",\"eventType\":\"channel.message\",\"schemaVersion\":1,\"actorDid\":\"did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm\",\"participantType\":\"agent\",\"participantSequence\":2,\"wallTime\":\"2026-01-01T00:00:04.000Z\",\"payload\":{\"channelId\":\"genesis\",\"text\":\"Seconded.\"},\"visibility\":{\"type\":\"public\"},\"references\":[],\"provenance\":{\"signerDid\":\"did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm\",\"terminalHumanDids\":[\"did:key:z6MkpgzzZ74fAMCTJ1TY1V9U6SwnPGk7JDo7u9aj7aGH5mSm\"],\"provenancePathHashes\":[],\"admissionCredentialId\":\"adm-7aGH5mSm\",\"directInstructionEventIds\":[],\"governanceAuthorizationIds\":[],\"capabilityGrantIds\":[]},\"signature\":\"-uIq7AjmkJozQjYtapaaCXSJjpmDdDkn6BhElLO4bMLx8TYxCWxbBXOpt3HbZoX93YFBP9OfJKv8frqJJvfYCg\",\"logicalTime\":4,\"previousEventHash\":\"sha256:8b6e9654a727f86211b1f80b0335354e301d5026cb0ecf6af8fa4b4498e158a2\",\"eventHash\":\"sha256:eeb10728b72b910d6fcebb9d3f106efc4e0e0337d80ff78cd9615467b5c97283\",\"recorderSignature\":\"7DJwiWjiFvkqHoI6_ck_3ouWDPJL7p1M4x1fx6WikIHqF-VdJLZn5rdTLVv2_cgAu4DtWfIyqfDMNb1OgyGfAw\"}\n{\"eventId\":\"run-vectors-001-000005\",\"runId\":\"run-vectors-001\",\"eventType\":\"run.checkpoint\",\"schemaVersion\":1,\"actorDid\":\"did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx\",\"participantType\":\"controller\",\"participantSequence\":2,\"wallTime\":\"2026-01-01T00:00:05.000Z\",\"payload\":{\"note\":\"bootstrap complete\"},\"visibility\":{\"type\":\"controller\"},\"references\":[],\"provenance\":{\"signerDid\":\"did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx\",\"terminalHumanDids\":[\"did:key:z6Mkjq3X52URtx1bS9XmbX4ZZ1LwUd3YB7VbPAV1MD5MjePx\"],\"provenancePathHashes\":[],\"admissionCredentialId\":\"adm-MD5MjePx\",\"directInstructionEventIds\":[],\"governanceAuthorizationIds\":[],\"capabilityGrantIds\":[]},\"signature\":\"zI5HeBM5mpor4Bp5OcOMInDANxR1Oe8a6qSLiq4EPFAqUtNeF2pHAeru2MD1-Z5-FceSbrCMljqiLno2AU-JAA\",\"logicalTime\":5,\"previousEventHash\":\"sha256:eeb10728b72b910d6fcebb9d3f106efc4e0e0337d80ff78cd9615467b5c97283\",\"eventHash\":\"sha256:1d4a05098a1f996fb4bd63db0c2d963228b2ce092cc37fb51ac8a28b653adb69\",\"recorderSignature\":\"EpGQKT-rgdA7G0RSZcK9TgpTBlItjbFyfL_6rYW7VhK88C8KAlq4o_C7MQrWOMSj0watTjcPS0cDLDyFGKUdCQ\"}"
+  },
+  "chain": [
+    {
+      "name": "valid-run",
+      "patches": [],
+      "expectValid": true,
+      "expectCodes": [],
+      "expectFirstBadIndex": -1
+    },
+    {
+      "name": "payload-altered",
+      "note": "Naive edit: only the edited event is implicated, because later events still link to what it claimed to be.",
+      "patches": [
+        {
+          "op": "replace",
+          "path": "/3/payload",
+          "value": {
+            "tampered": true
+          }
+        }
+      ],
+      "expectValid": false,
+      "expectCodes": [
+        "INVALID_EVENT_HASH",
+        "INVALID_SIGNATURE"
+      ],
+      "expectFirstBadIndex": 3
+    },
+    {
+      "name": "declared-hash-altered",
+      "patches": [
+        {
+          "op": "replace",
+          "path": "/2/eventHash",
+          "value": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "expectValid": false,
+      "expectCodes": [
+        "INVALID_EVENT_HASH"
+      ],
+      "expectFirstBadIndex": 2
+    },
+    {
+      "name": "chain-link-rewritten",
+      "patches": [
+        {
+          "op": "replace",
+          "path": "/2/previousEventHash",
+          "value": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "expectValid": false,
+      "expectCodes": [
+        "BROKEN_CHAIN"
+      ],
+      "expectFirstBadIndex": 2
+    },
+    {
+      "name": "visibility-widened",
+      "note": "Reclassifying controller-only material as public (§6.12).",
+      "patches": [
+        {
+          "op": "replace",
+          "path": "/5/visibility",
+          "value": {
+            "type": "public"
+          }
+        }
+      ],
+      "expectValid": false,
+      "expectCodes": [
+        "INVALID_EVENT_HASH"
+      ],
+      "expectFirstBadIndex": 5
+    },
+    {
+      "name": "event-removed",
+      "patches": [
+        {
+          "op": "remove",
+          "path": "/3"
+        }
+      ],
+      "expectValid": false,
+      "expectCodes": [
+        "BROKEN_CHAIN"
+      ],
+      "expectFirstBadIndex": 3
+    },
+    {
+      "name": "events-reordered",
+      "patches": [
+        {
+          "op": "move",
+          "from": "/3",
+          "path": "/2"
+        }
+      ],
+      "expectValid": false,
+      "expectCodes": [
+        "BROKEN_CHAIN"
+      ],
+      "expectFirstBadIndex": 2
+    },
+    {
+      "name": "recorder-signature-cleared",
+      "note": "Position attestation must be checked, not assumed.",
+      "patches": [
+        {
+          "op": "replace",
+          "path": "/1/recorderSignature",
+          "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ],
+      "expectValid": false,
+      "expectCodes": [
+        "INVALID_RECORDER_SIGNATURE"
+      ],
+      "expectFirstBadIndex": 1
+    },
+    {
+      "name": "sequence-replayed",
+      "note": "Stale and gapped are distinct: a gap means loss, a stale value means replay.",
+      "patches": [
+        {
+          "op": "replace",
+          "path": "/4/participantSequence",
+          "value": 1
+        }
+      ],
+      "expectValid": false,
+      "expectCodes": [
+        "STALE_SEQUENCE"
+      ],
+      "expectFirstBadIndex": 4
+    },
+    {
+      "name": "logical-time-rewound",
+      "patches": [
+        {
+          "op": "replace",
+          "path": "/2/logicalTime",
+          "value": 0
+        }
+      ],
+      "expectValid": false,
+      "expectCodes": [
+        "NON_MONOTONIC_LOGICAL_TIME"
+      ],
+      "expectFirstBadIndex": 2
+    }
+  ]
+}

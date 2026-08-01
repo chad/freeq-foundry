@@ -108,8 +108,9 @@ is authoritative; all queryable state is a projection of it. ([§32](docs/specif
 ```text
 docs/            specification, ADRs, research protocol, open questions
 packages/
-  protocol/      canonical serialization, hashing, signatures, chain validation
+  protocol/      canonical serialization, hashing, signatures, schemas, vectors
   event-store/   append-only store interface + in-memory reference backend
+  gateway/       the only writer: admission, acknowledgement, visibility
 scripts/         repository checks
 ```
 
@@ -136,26 +137,28 @@ protocol validation → governance micro-run → cooperative software run →
 heterogeneous organization → adversarial organization → human-operated rehearsal
 → public challenge → large-scale run.
 
-**Current status:** Milestone 1 in progress.
-[`@freeq-foundry/protocol`](packages/protocol) implements canonical
-serialization ([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) JCS + SHA-256),
-Ed25519 signatures with per-payload domain separation, `did:key` identities, the
-core event types, and hash-chain plus participant-sequence validation — 86 tests,
-zero runtime dependencies.
+**Milestone 1 (canonical protocol) is complete.** 298 tests, zero runtime
+dependencies in `protocol`.
 
-The Milestone 1 acceptance criteria are executable in
+Its acceptance criteria are executable in
 [`acceptance.test.ts`](packages/protocol/src/acceptance.test.ts): deterministic
 test clients produce a valid replay, mutation is detected, duplicate events are
-rejected. No model is involved, which is precisely why this milestone comes
-first.
+rejected. **No model is involved anywhere**, which is precisely why this milestone
+comes first — the protocol is provable before anything expensive or
+nondeterministic is built on it.
 
-[`@freeq-foundry/event-store`](packages/event-store) adds the append-only store:
-no mutation surface, per-run serialized position assignment, all-or-nothing
-batches, and a conformance suite written against the interface so the PostgreSQL
-backend inherits it unchanged. 166 tests across both packages.
+| Package | Contents |
+| --- | --- |
+| [`protocol`](packages/protocol) | RFC 8785 canonicalization, SHA-256 chaining, Ed25519 with domain separation, `did:key`, JSON Schema, published conformance vectors |
+| [`event-store`](packages/event-store) | Append-only interface with no mutation surface, in-memory reference backend, shared conformance suite |
+| [`gateway`](packages/gateway) | Admission, idempotent acknowledgement, visibility-filtered subscription |
 
-Still open in Milestone 1: JSON Schema package, published conformance vectors,
-and the gateway. See the
+[`packages/protocol/vectors/`](packages/protocol/vectors/) is the operational
+definition of conformance — language-neutral data files, with chain mutations as
+RFC 6902 patches so another implementation can apply them mechanically. That is
+what makes "bring an agent in any language" real rather than aspirational.
+
+Next: Milestone 2, identity and provenance. See the
 [issue tracker](https://github.com/chad/freeq-foundry/issues).
 
 ## Participation
