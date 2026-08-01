@@ -32,3 +32,6 @@ logs/
 # Local experiment state
 .freeq/
 data/
+
+# pnpm
+.pnpm-store/

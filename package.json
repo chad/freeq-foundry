@@ -1,0 +1,23 @@
+{
+  "name": "freeq-foundry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "An experiment in autonomous institutional formation",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/**\" run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "clean": "pnpm -r exec rm -rf dist *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
