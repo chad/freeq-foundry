@@ -1,7 +1,7 @@
 {
-  "name": "@freeq-foundry/controller",
+  "name": "@freeq-foundry/identity",
   "version": "0.1.0",
-  "description": "Run orchestration from genesis to termination",
+  "description": "DIDs, credentials, provenance verification, revocation, and admission",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
@@ -24,14 +24,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@freeq-foundry/agents": "workspace:*",
-    "@freeq-foundry/capabilities": "workspace:*",
-    "@freeq-foundry/event-store": "workspace:*",
-    "@freeq-foundry/gateway": "workspace:*",
-    "@freeq-foundry/governance": "workspace:*",
-    "@freeq-foundry/identity": "workspace:*",
-    "@freeq-foundry/policy": "workspace:*",
-    "@freeq-foundry/projections": "workspace:*",
     "@freeq-foundry/protocol": "workspace:*"
   },
   "devDependencies": {

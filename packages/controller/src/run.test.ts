@@ -54,22 +54,19 @@ function cooperativePopulation(): readonly ParticipantSpec[] {
     {
       keyPair: alice,
       adapter: builderAgent("alice-builder", alice.did),
-      lineagePseudonym: "L1",
-      terminalHumanDid: "did:key:zHumanOne",
+      humanRoot: deterministicKeyPair("human-one"),
       declaredAutonomy: "autonomous",
     },
     {
       keyPair: bob,
       adapter: institutionalistAgent("bob-institutionalist"),
-      lineagePseudonym: "L2",
-      terminalHumanDid: "did:key:zHumanTwo",
+      humanRoot: deterministicKeyPair("human-two"),
       declaredAutonomy: "autonomous",
     },
     {
       keyPair: carol,
       adapter: builderAgent("carol-builder", alice.did),
-      lineagePseudonym: "L3",
-      terminalHumanDid: "did:key:zHumanThree",
+      humanRoot: deterministicKeyPair("human-three"),
       declaredAutonomy: "autonomous",
     },
   ];
@@ -215,8 +212,7 @@ describe("end-to-end: capability enforcement is load-bearing", () => {
       {
         keyPair: mallory,
         adapter: weakSaboteurAgent("mallory-saboteur"),
-        lineagePseudonym: "L4",
-        terminalHumanDid: "did:key:zHumanFour",
+        humanRoot: deterministicKeyPair("human-four"),
         declaredAutonomy: "autonomous",
       },
     ];
@@ -385,5 +381,166 @@ describe("end-to-end: the log is the artifact", () => {
       expect(event.provenance.terminalHumanDids.length).toBeGreaterThan(0);
       expect(event.provenance.admissionCredentialId).not.toBe("");
     }
+  });
+});
+
+describe("end-to-end: provenance is verified, not asserted", () => {
+  it("derives lineage pseudonyms from the verified chain", async () => {
+    // A scenario can no longer claim a lineage it cannot prove: the pseudonym is
+    // computed from the credential chain at admission.
+    const result = await executeRun(baseConfig({ runId: "run-lineage" }));
+    for (const participant of result.state.participants.byDid.values()) {
+      expect(participant.lineagePseudonym).toMatch(/^L-[0-9a-f]{12}$/);
+      expect(participant.terminalHumanDids[0]).toMatch(/^did:key:z/);
+    }
+  });
+
+  it("records the credential chain for every participant", async () => {
+    const result = await executeRun(baseConfig({ runId: "run-creds" }));
+    const events = [];
+    for await (const event of result.store.read(result.runId)) events.push(event);
+
+    const issued = events.filter((e) => e.eventType === EventTypes.CREDENTIAL_ISSUED);
+    expect(issued).toHaveLength(3);
+    for (const event of issued) {
+      const payload = event.payload as { credentialIds: string[]; chainHash: string };
+      expect(payload.credentialIds.length).toBeGreaterThanOrEqual(2);
+      expect(payload.chainHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    }
+  });
+
+  it("refuses an applicant whose lineage is too deep, and records the refusal", async () => {
+    // §11.4 condition 9. Silently dropping the applicant would leave the
+    // population unexplained (§12.5).
+    const deep = cooperativePopulation().map((p) => ({ ...p, lineageDepth: 5 }));
+    const result = await executeRun(
+      baseConfig({
+        runId: "run-too-deep",
+        participants: deep,
+        lineageConstraints: { maxDepth: 2, maxFanOutPerRoot: 8 },
+      }),
+    );
+
+    const events = [];
+    for await (const event of result.store.read(result.runId)) events.push(event);
+    const rejected = events.filter((e) => e.eventType === EventTypes.PARTICIPANT_REJECTED);
+
+    expect(rejected).toHaveLength(3);
+    expect((rejected[0]?.payload as { reason: string }).reason).toBe("depth_exceeded");
+    expect(result.state.participants.byDid.size).toBe(0);
+    expect(result.shipped).toBe(false);
+  });
+
+  it("admits a deeper lineage when the ceiling allows it", async () => {
+    const deep = cooperativePopulation().map((p) => ({ ...p, lineageDepth: 3 }));
+    const result = await executeRun(
+      baseConfig({
+        runId: "run-deep-ok",
+        participants: deep,
+        lineageConstraints: { maxDepth: 4, maxFanOutPerRoot: 8 },
+      }),
+    );
+    expect(result.state.participants.byDid.size).toBe(3);
+    for (const participant of result.state.participants.byDid.values()) {
+      expect(participant.lineageDepth).toBe(3);
+    }
+  });
+
+  it("enforces the fan-out ceiling per human root", async () => {
+    // §58.4: a generous platform limit that governance cannot raise. Three agents
+    // sharing one root, ceiling of two.
+    const sharedRoot = deterministicKeyPair("human-shared");
+    const shared = cooperativePopulation().map((p) => ({ ...p, humanRoot: sharedRoot }));
+    const result = await executeRun(
+      baseConfig({
+        runId: "run-fanout",
+        participants: shared,
+        lineageConstraints: { maxDepth: 4, maxFanOutPerRoot: 2 },
+      }),
+    );
+
+    const events = [];
+    for await (const event of result.store.read(result.runId)) events.push(event);
+    const rejected = events.filter((e) => e.eventType === EventTypes.PARTICIPANT_REJECTED);
+
+    expect(result.state.participants.byDid.size).toBe(2);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0]?.payload as { reason: string }).reason).toBe("fan_out_exceeded");
+  });
+
+  it("cannot ship when every agent shares one lineage", async () => {
+    // The genesis quorum needs two distinct human roots. Verified provenance means
+    // three agents from one operator are now genuinely one lineage, not three.
+    const sharedRoot = deterministicKeyPair("human-solo");
+    const shared = cooperativePopulation().map((p) => ({ ...p, humanRoot: sharedRoot }));
+    const result = await executeRun(
+      baseConfig({ runId: "run-one-lineage", participants: shared }),
+    );
+
+    expect(result.state.participants.byDid.size).toBe(3);
+    expect(distinctLineages(result.state.participants)).toBe(1);
+    expect(result.state.capabilities.grants.size).toBe(0);
+    expect(result.shipped).toBe(false);
+  });
+
+  it("suspends descendants when a root credential is revoked mid-run", async () => {
+    // §11.10, exercised inside a real run rather than only in unit tests.
+    const rootId = `hrc-${deterministicKeyPair("human-one").did.slice(-8)}`;
+    const result = await executeRun(
+      baseConfig({
+        runId: "run-revoke",
+        revokeAtTick: new Map([[2, rootId]]),
+        scenario: { ...scenario, maxTicks: 30 },
+      }),
+    );
+
+    const events = [];
+    for await (const event of result.store.read(result.runId)) events.push(event);
+
+    const revoked = events.filter((e) => e.eventType === EventTypes.CREDENTIAL_REVOKED);
+    const suspended = events.filter((e) => e.eventType === EventTypes.PARTICIPANT_SUSPENDED);
+
+    expect(revoked).toHaveLength(1);
+    expect(suspended.length).toBeGreaterThan(0);
+    // The suspension cites the credential that caused it, so the cascade is
+    // explicable rather than mysterious.
+    expect((suspended[0]?.payload as { causedByCredentialId: string }).causedByCredentialId).toBe(
+      rootId,
+    );
+    for (const event of suspended) {
+      const did = (event.payload as { did: string }).did;
+      expect(result.state.participants.byDid.get(did)?.suspended).toBe(true);
+    }
+  });
+
+  it("keeps history intact after a revocation", async () => {
+    // §6.8: revocation does not erase past events, and the chain must still verify.
+    const rootId = `hrc-${deterministicKeyPair("human-one").did.slice(-8)}`;
+    const result = await executeRun(
+      baseConfig({
+        runId: "run-revoke-history",
+        revokeAtTick: new Map([[2, rootId]]),
+        scenario: { ...scenario, maxTicks: 30 },
+      }),
+    );
+    const events = [];
+    for await (const event of result.store.read(result.runId)) events.push(event);
+
+    expect(
+      verifyChain(events, { runId: result.runId, recorderDid: recorder.did }).violations,
+    ).toEqual([]);
+    // The suspended participant's earlier actions are still in the log.
+    expect(events.some((e) => e.eventType === EventTypes.PARTICIPANT_ADMITTED)).toBe(true);
+  });
+
+  it("stays deterministic with credential verification in the path", async () => {
+    const first = await executeRun(baseConfig({ runId: "run-det-creds" }));
+    const second = await executeRun(baseConfig({ runId: "run-det-creds" }));
+    const hashesOf = async (r: typeof first): Promise<string[]> => {
+      const out: string[] = [];
+      for await (const event of r.store.read(r.runId)) out.push(event.eventHash);
+      return out;
+    };
+    expect(await hashesOf(second)).toEqual(await hashesOf(first));
   });
 });

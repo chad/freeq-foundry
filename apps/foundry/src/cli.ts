@@ -69,6 +69,13 @@ const scenario: Scenario = {
   msPerTick: 60_000,
 };
 
+/**
+ * Four independent human operators, each with one agent.
+ *
+ * Lineage pseudonyms are no longer asserted here: they are derived from the
+ * verified credential chain at admission. A scenario cannot claim a lineage it
+ * cannot prove.
+ */
 function population(withSaboteur: boolean): readonly ParticipantSpec[] {
   const alice = deterministicKeyPair("alice");
   const bob = deterministicKeyPair("bob");
@@ -79,22 +86,19 @@ function population(withSaboteur: boolean): readonly ParticipantSpec[] {
     {
       keyPair: alice,
       adapter: builderAgent("alice-builder", alice.did),
-      lineagePseudonym: "L1",
-      terminalHumanDid: "did:key:zHumanOne",
+      humanRoot: deterministicKeyPair("human-one"),
       declaredAutonomy: "autonomous",
     },
     {
       keyPair: bob,
       adapter: institutionalistAgent("bob-institutionalist"),
-      lineagePseudonym: "L2",
-      terminalHumanDid: "did:key:zHumanTwo",
+      humanRoot: deterministicKeyPair("human-two"),
       declaredAutonomy: "autonomous",
     },
     {
       keyPair: carol,
       adapter: builderAgent("carol-builder", alice.did),
-      lineagePseudonym: "L3",
-      terminalHumanDid: "did:key:zHumanThree",
+      humanRoot: deterministicKeyPair("human-three"),
       declaredAutonomy: "autonomous",
     },
   ];
@@ -103,8 +107,7 @@ function population(withSaboteur: boolean): readonly ParticipantSpec[] {
     base.push({
       keyPair: mallory,
       adapter: weakSaboteurAgent("mallory-saboteur"),
-      lineagePseudonym: "L4",
-      terminalHumanDid: "did:key:zHumanFour",
+      humanRoot: deterministicKeyPair("human-four"),
       declaredAutonomy: "autonomous",
     });
   }

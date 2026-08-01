@@ -16,12 +16,28 @@ import {
   DEFAULT_HORIZON_MS,
   RunTerminationReason,
   RunValidity,
+  deterministicKeyPair as deterministicKeyPairFor,
   hashCanonical,
   type KeyPair,
   type RunManifest,
 } from "@freeq-foundry/protocol";
 import { InMemoryEventStore } from "@freeq-foundry/event-store";
 import { Gateway, StaticAdmissionRegistry } from "@freeq-foundry/gateway";
+import {
+  AdmissionService,
+  ChallengeRegistry,
+  RevocationRegistry,
+  buildProvenanceProof,
+  computeBlastRadius,
+  createChallenge,
+  defaultResolvers,
+  issueAgentCreationCredential,
+  issueHumanRootCredential,
+  respondToChallenge,
+  signRevocation,
+  type LineageConstraints,
+  type SignedCredential,
+} from "@freeq-foundry/identity";
 import {
   EventTypes,
   activityProjector,
@@ -75,9 +91,17 @@ export interface Scenario {
 export interface ParticipantSpec {
   readonly keyPair: KeyPair;
   readonly adapter: AgentAdapter;
-  readonly lineagePseudonym: string;
-  readonly terminalHumanDid: string;
+  /**
+   * Human root this participant's lineage terminates in.
+   *
+   * The controller issues the credential chain, so this is the *scenario's* claim
+   * about who introduced the agent. Verification still runs: an internally issued
+   * chain that fails the nine conditions is refused like any other.
+   */
+  readonly humanRoot: KeyPair;
   readonly declaredAutonomy?: "autonomous" | "supervised" | "teleoperated";
+  /** Depth of the chain to build. 1 means the human created this agent directly. */
+  readonly lineageDepth?: number;
 }
 
 export interface RunConfig {
@@ -90,6 +114,15 @@ export interface RunConfig {
   readonly confirmatory?: boolean;
   /** Condition label, e.g. `capability_enforced` or `unenforced_governance`. */
   readonly arm?: string;
+  /** Lineage depth and fan-out ceilings (§11.4 condition 9). */
+  readonly lineageConstraints?: LineageConstraints;
+  /**
+   * Credentials to revoke mid-run, keyed by the tick at which they take effect.
+   *
+   * Exists so §11.10 — root revocation suspends descendants — can be exercised
+   * inside a real run rather than only in unit tests.
+   */
+  readonly revokeAtTick?: ReadonlyMap<number, string>;
   /**
    * When false, capability checks are bypassed — §49.6 Condition F.
    *
@@ -151,6 +184,21 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     // The run clock is simulated, so real wall-clock skew is irrelevant here and
     // would only reject our own synthetic timestamps.
     maxClockSkewMs: Number.MAX_SAFE_INTEGER,
+  });
+
+  // Real provenance verification. Every participant presents a signed credential
+  // chain and proves key possession; nothing is admitted on assertion alone
+  // (§6.2, §6.3, §11.4).
+  const resolvers = defaultResolvers();
+  const revocations = new RevocationRegistry();
+  const challenges = new ChallengeRegistry();
+  const provenance = new AdmissionService({
+    runId: config.runId,
+    resolvers,
+    revocations,
+    ...(config.lineageConstraints === undefined
+      ? {}
+      : { constraints: config.lineageConstraints }),
   });
 
   const manifest: RunManifest = {
@@ -215,22 +263,96 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     rules: genesisRules(),
   });
 
+  const genesisInstant = new Date(writer.wallTimeMs).toISOString();
+  const credentialsByDid = new Map<string, readonly SignedCredential[]>();
+  const admittedParticipants: ParticipantSpec[] = [];
+  const humanRoots = new Map<string, KeyPair>();
+
   for (const participant of config.participants) {
-    const credentialId = `adm-${participant.keyPair.did.slice(-8)}`;
+    humanRoots.set(participant.humanRoot.did, participant.humanRoot);
+  }
+
+  // One human-root credential per distinct root, issued by the controller. §11.2
+  // permits controller-issued roots for a prototype; a public run needs stronger
+  // verification (§58.2).
+  const rootCredentials = new Map<string, SignedCredential>();
+  for (const [did, keyPair] of humanRoots) {
+    rootCredentials.set(
+      did,
+      issueHumanRootCredential({
+        id: `hrc-${did.slice(-8)}`,
+        subjectDid: did,
+        issuerDid: config.controller.did,
+        issuerPrivateKey: config.controller.privateKey,
+        verificationMethod: "controller_issued",
+        issuedAt: genesisInstant,
+      }),
+    );
+    void keyPair;
+  }
+
+  for (const participant of config.participants) {
+    const rootCredential = rootCredentials.get(participant.humanRoot.did) as SignedCredential;
+    const chain = buildChain(
+      participant,
+      rootCredential,
+      genesisInstant,
+      participant.lineageDepth ?? 1,
+    );
+
+    // Key possession: challenge and response, not an assumption (§6.3).
+    const challenge = challenges.issue(
+      createChallenge({
+        subjectDid: participant.keyPair.did,
+        runId: config.runId,
+        issuedAt: genesisInstant,
+        nonce: `nonce-${participant.keyPair.did.slice(-12)}`,
+      }),
+    );
+    const possession = challenges.consume(
+      respondToChallenge(challenge, participant.keyPair.privateKey),
+      genesisInstant,
+    );
+
+    const outcome = await provenance.admit(
+      buildProvenanceProof(participant.keyPair.did, chain),
+      { at: genesisInstant, keyPossessionProved: possession.proved },
+    );
+
+    if (!outcome.admitted) {
+      // A refused applicant is recorded and excluded. Silently dropping them would
+      // leave the population unexplained (§12.5).
+      await writer.append(config.controller.did, EventTypes.PARTICIPANT_REJECTED, {
+        did: participant.keyPair.did,
+        reason: outcome.reason,
+        detail: outcome.detail,
+      });
+      continue;
+    }
+
+    credentialsByDid.set(participant.keyPair.did, chain);
+    admittedParticipants.push(participant);
+
     admissions.admit(config.runId, {
       did: participant.keyPair.did,
       participantType: "agent",
-      admissionCredentialId: credentialId,
+      admissionCredentialId: outcome.admissionCredentialId,
     });
-    writer.register(participant.keyPair, "agent", credentialId);
+    writer.register(participant.keyPair, "agent", outcome.admissionCredentialId);
+
+    await writer.append(config.controller.did, EventTypes.CREDENTIAL_ISSUED, {
+      subjectDid: participant.keyPair.did,
+      credentialIds: chain.map((credential) => credential.id),
+      chainHash: buildProvenanceProof(participant.keyPair.did, chain).chainHash,
+    });
 
     await writer.append(config.controller.did, EventTypes.PARTICIPANT_ADMITTED, {
       did: participant.keyPair.did,
       participantType: "agent",
-      admissionCredentialId: credentialId,
-      terminalHumanDids: [participant.terminalHumanDid],
-      lineageDepth: 1,
-      lineagePseudonym: participant.lineagePseudonym,
+      admissionCredentialId: outcome.admissionCredentialId,
+      terminalHumanDids: outcome.terminalHumanDids,
+      lineageDepth: outcome.lineageDepth,
+      lineagePseudonym: outcome.lineagePseudonym,
       ...(participant.declaredAutonomy === undefined
         ? {}
         : { declaredAutonomy: participant.declaredAutonomy }),
@@ -287,8 +409,45 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
       break;
     }
 
+    // Mid-run revocation, if the scenario asked for one. §11.10: revoking a
+    // credential suspends every participant whose provenance runs through it.
+    const toRevoke = config.revokeAtTick?.get(tick);
+    if (toRevoke !== undefined) {
+      const allCredentials = [...credentialsByDid.values()].flat();
+      const radius = computeBlastRadius(toRevoke, allCredentials);
+      revocations.revoke(
+        signRevocation(
+          {
+            credentialId: toRevoke,
+            revokerDid: config.controller.did,
+            reasonCode: "controller_action",
+            effectiveAt: new Date(writer.wallTimeMs).toISOString(),
+          },
+          config.controller.privateKey,
+        ),
+      );
+      await writer.append(config.controller.did, EventTypes.CREDENTIAL_REVOKED, {
+        credentialId: toRevoke,
+        revokerDid: config.controller.did,
+        reasonCode: "controller_action",
+        effectiveAt: new Date(writer.wallTimeMs).toISOString(),
+        affectedParticipantDids: radius.affectedDids,
+      });
+      for (const did of provenance.suspendAffectedBy(toRevoke)) {
+        admissions.suspend(config.runId, did);
+        await writer.append(config.controller.did, EventTypes.PARTICIPANT_SUSPENDED, {
+          did,
+          reasonCode: "credential_revoked",
+          causedByCredentialId: toRevoke,
+        });
+      }
+    }
+
     // Fair round-robin, rotated by tick so no agent is permanently first (§27).
-    const order = rotate(config.participants, tick);
+    const order = rotate(
+      admittedParticipants.filter((p) => !provenance.isSuspended(p.keyPair.did)),
+      tick,
+    );
     let anyProgress = false;
 
     for (const participant of order) {
@@ -347,7 +506,10 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     }
     // No agent could afford to act and nothing changed: a stalled organization,
     // which is an outcome rather than an error (§47.4).
-    if (!anyProgress && allBankrupt(config.participants, after)) {
+    const active = admittedParticipants.filter(
+      (p) => !provenance.isSuspended(p.keyPair.did),
+    );
+    if (!anyProgress && allBankrupt(active, after)) {
       terminationReason = RunTerminationReason.BUDGET_EXHAUSTED;
       break;
     }
@@ -384,6 +546,72 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
       activity: final.activity,
     },
   };
+}
+
+/**
+ * Build a credential chain of the requested depth.
+ *
+ * Depth 1 is the human creating the agent directly. Deeper chains insert
+ * intermediate agents, each of which must have been granted redelegation — which
+ * is what makes the §11.6 spawning rule testable inside a run.
+ */
+function buildChain(
+  participant: ParticipantSpec,
+  rootCredential: SignedCredential,
+  issuedAt: string,
+  depth: number,
+): readonly SignedCredential[] {
+  if (depth <= 1) {
+    return [
+      issueAgentCreationCredential({
+        id: `acc-${participant.keyPair.did.slice(-8)}`,
+        parentDid: participant.humanRoot.did,
+        childDid: participant.keyPair.did,
+        parentPrivateKey: participant.humanRoot.privateKey,
+        relationship: "created",
+        issuedAt,
+        redelegable: true,
+      }),
+      rootCredential,
+    ];
+  }
+
+  // Deterministic intermediates, so a deeper chain is still byte-reproducible.
+  const intermediates = Array.from({ length: depth - 1 }, (_, i) =>
+    deterministicKeyPairFor(`${participant.keyPair.did}-mid-${i}`),
+  );
+  const edges: SignedCredential[] = [];
+  let parent = participant.humanRoot;
+
+  for (const [index, intermediate] of intermediates.entries()) {
+    edges.push(
+      issueAgentCreationCredential({
+        id: `acc-${participant.keyPair.did.slice(-8)}-mid-${index}`,
+        parentDid: parent.did,
+        childDid: intermediate.did,
+        parentPrivateKey: parent.privateKey,
+        relationship: "created",
+        issuedAt,
+        redelegable: true,
+      }),
+    );
+    parent = intermediate;
+  }
+
+  edges.push(
+    issueAgentCreationCredential({
+      id: `acc-${participant.keyPair.did.slice(-8)}`,
+      parentDid: parent.did,
+      childDid: participant.keyPair.did,
+      parentPrivateKey: parent.privateKey,
+      relationship: "spawned",
+      issuedAt,
+      redelegable: true,
+    }),
+  );
+
+  // Ordered from the subject's own edge outward to the root (§11.4).
+  return [...edges.reverse(), rootCredential];
 }
 
 function rotate<T>(items: readonly T[], by: number): readonly T[] {

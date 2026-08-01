@@ -3,7 +3,7 @@
 Where the code is against the [specification](specification.md), honestly. Kept
 here rather than in the README so it can be detailed without burying the intro.
 
-**Last updated:** 2026-02-19 · 529 tests · [CI](https://github.com/chad/freeq-foundry/actions)
+**Last updated:** 2026-02-19 · 599 tests · [CI](https://github.com/chad/freeq-foundry/actions)
 
 ## What works end to end
 
@@ -29,7 +29,7 @@ than two.
 | # | Milestone | Status |
 | --- | --- | --- |
 | 1 | Canonical protocol | **Complete** |
-| 2 | Identity and provenance | Partial — `did:key` and admission work; credential chains do not |
+| 2 | Identity and provenance | **Complete** except `did:web` and stronger human verification |
 | 3 | Well-known onboarding | Not started |
 | 4 | Governance core | **Complete** for the run loop; offices, sanctions, appeals remain |
 | 5 | Offices, elections, delegation | Partial — election methods and delegation work; offices do not |
@@ -46,6 +46,7 @@ than two.
 | Package | Tests | State |
 | --- | --: | --- |
 | [protocol](../packages/protocol) | 224 | Complete. Zero runtime dependencies, published conformance vectors |
+| [identity](../packages/identity) | 61 | Nine-condition provenance verification, revocation, admission |
 | [policy](../packages/policy) | 51 | Complete. `freeq-rules-v1` with decidable attenuation |
 | [projections](../packages/projections) | 43 | Eight core projections and derived metrics |
 | [event-store](../packages/event-store) | 39 | In-memory backend; **PostgreSQL backend missing** |
@@ -60,43 +61,34 @@ than two.
 
 Ordered by how much they matter for a real run.
 
-### 1. No credential chains
-
-[§11.4](specification.md#114-provenance-proof) defines nine conditions a
-provenance proof must satisfy. Admission currently trusts a static registry, so
-the [§6.2 human-root invariant](specification.md#62-human-root-invariant) is
-*represented* in every event but not *verified*. Lineage is asserted, not proven.
-
-This is the largest gap between what the code claims and what it checks.
-
-### 2. No real software production
+### 1. No real software production
 
 Work items are abstract identifiers. There is no repository, no CI, no sandbox, so
 [§59.7](specification.md#59-final-design-principles) — assume generated code is
 dangerous — is not yet tested by anything. The evaluator verifies that work items
 were marked complete, not that software works.
 
-### 3. No provider adapters
+### 2. No provider adapters
 
 Every agent is deterministic. This validates the harness and costs nothing, but it
 means **nothing here says anything about model behaviour**. Model diversity is
 currently a slogan rather than the variable [§59.18](specification.md#59-final-design-principles)
 requires.
 
-### 4. No durable storage or network transport
+### 3. No durable storage or network transport
 
 The event store is in-memory and the gateway is in-process. A run cannot outlive
 the process, and no external operator can connect. Both are designed
 ([ADR-0006](adr/0006-event-store-backend.md)) and neither is built.
 
-### 5. No study-level budget ceiling
+### 4. No study-level budget ceiling
 
 [§21](specification.md#21-treasury-budgets-and-scarcity)'s hard ceiling is
 per-run. A confirmatory study needs 60 valid runs — 720 run-hours per contrast —
 and nothing prevents a study from overspending while every individual run respects
 its ceiling. Flagged in [ADR-0009](adr/0009-research-protocol-harness-requirements.md).
 
-### 6. Pilot variance is unknown
+### 5. Pilot variance is unknown
 
 The [research protocol](research-protocol.md)'s power calculation assumes a
 between-run standard deviation of roughly 3 hours for the primary outcome. Real
@@ -106,9 +98,12 @@ changes the required *n*.
 ## What the tests do and do not establish
 
 **Do:** the protocol is correct and cross-implementable; the log is tamper-evident;
-projections rebuild exactly; capability enforcement is load-bearing; governance
-changes real authority; a run terminates and records why; a solo agent cannot ship
-under enforcement because the genesis quorum needs two lineages.
+projections rebuild exactly; provenance is verified against all nine
+[§11.4](specification.md#114-provenance-proof) conditions rather than asserted;
+revoking a root suspends its descendants without erasing history; capability
+enforcement is load-bearing; governance changes real authority; a run terminates
+and records why; one operator's agents are one lineage and cannot pass a proposal
+alone.
 
 **Do not:** anything about language models, anything about how *real* independently
 operated agents behave, anything about software the organization produces, and

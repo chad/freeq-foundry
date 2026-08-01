@@ -113,6 +113,7 @@ apps/
   foundry/          CLI: run a scenario, produce the export bundle
 packages/
   protocol/         canonicalization, hashing, signatures, schemas, vectors
+  identity/         DIDs, credentials, provenance verification, admission
   policy/           freeq-rules-v1, with decidable attenuation
   projections/      pure folds deriving queryable state from the log
   event-store/      append-only store + in-memory reference backend

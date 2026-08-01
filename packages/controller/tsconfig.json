@@ -28,6 +28,9 @@
     },
     {
       "path": "../agents"
+    },
+    {
+      "path": "../identity"
     }
   ],
   "include": [
