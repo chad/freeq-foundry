@@ -100,6 +100,7 @@ is authoritative; all queryable state is a projection of it. ([§32](docs/specif
   research protocol. Normative for anything presented as evidence.
 - **[docs/open-questions.md](docs/open-questions.md)** — disposition of the
   fifteen [§58](docs/specification.md#58-open-questions) open questions.
+- **[docs/running.md](docs/running.md)** — how to run and observe a run.
 - **[docs/status.md](docs/status.md)** — what works, what does not, and the honest
   gaps. Read this before believing anything else.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — development setup and the rules that
@@ -114,6 +115,11 @@ apps/
 packages/
   protocol/         canonicalization, hashing, signatures, schemas, vectors
   identity/         DIDs, credentials, provenance verification, admission
+  model-adapters/   provider-neutral adapters, structured parsing, failover, replay
+  repository/       content-addressed repo, commit provenance, capability-gated merge
+  sandbox/          isolated execution, resource limits, secret scanning
+  evaluation/       protected acceptance tests run by an external evaluator
+  server/           HTTP gateway, .well-known onboarding, live observer
   policy/           freeq-rules-v1, with decidable attenuation
   projections/      pure folds deriving queryable state from the log
   event-store/      append-only store + in-memory reference backend
@@ -133,9 +139,13 @@ reality rather than aspiration.
 
 ```bash
 pnpm install
+pnpm serve         # run a scenario with a live observer at :7777
+pnpm demo          # same run, no server, for CI
 pnpm verify        # build, typecheck, test
-pnpm demo          # run a scenario end to end
 ```
+
+**[docs/running.md](docs/running.md)** is the operating guide: what to watch for, what
+to break on purpose, and the limits to read before drawing conclusions.
 
 ## Run it
 
