@@ -26,6 +26,7 @@
   "dependencies": {
     "@freeq-foundry/agents": "workspace:*",
     "@freeq-foundry/capabilities": "workspace:*",
+    "@freeq-foundry/deployment": "workspace:*",
     "@freeq-foundry/evaluation": "workspace:*",
     "@freeq-foundry/event-store": "workspace:*",
     "@freeq-foundry/gateway": "workspace:*",

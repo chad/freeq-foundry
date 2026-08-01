@@ -23,6 +23,7 @@ import {
   remainingCredits,
 } from "@freeq-foundry/projections";
 import {
+  DeterministicAgent,
   builderAgent,
   institutionalistAgent,
   weakSaboteurAgent,
@@ -539,5 +540,108 @@ describe("end-to-end: provenance is verified, not asserted", () => {
       return out;
     };
     expect(await hashesOf(second)).toEqual(await hashesOf(first));
+  });
+});
+
+describe("end-to-end: deployment gates the release", () => {
+  it("does not ship when production cannot run long enough", async () => {
+    // A well-behaved agent declines to submit rather than being rejected, so the
+    // observable fact is that nothing shipped despite the work being merged and
+    // deployed — not that a rejection occurred.
+    const result = await executeRun(
+      baseConfig({
+        runId: "run-uptime",
+        scenario: { ...scenario, minimumOperatingTicks: 500, maxTicks: 60 },
+      }),
+    );
+
+    const events = [];
+    for await (const event of result.store.read(result.runId)) events.push(event);
+
+    expect(result.shipped).toBe(false);
+    expect(events.some((e) => e.eventType === EventTypes.DEPLOYMENT_COMPLETED)).toBe(true);
+    expect(events.some((e) => e.eventType === EventTypes.RELEASE_VERIFIED)).toBe(false);
+  });
+
+  it("rejects a premature submission, naming the operating period", async () => {
+    // The evaluator's backstop, exercised by an agent that submits regardless. §9.4 is
+    // enforced by the evaluator, not by agent good manners.
+    const eager = new DeterministicAgent("eager", [
+      {
+        name: "submit immediately, whatever the state",
+        when: () => true,
+        then: (view) => [
+          { type: "submit_release", releaseId: `premature-${view.logicalTime}` },
+        ],
+      },
+    ]);
+
+    const alice = deterministicKeyPair("alice");
+    const result = await executeRun(
+      baseConfig({
+        runId: "run-premature",
+        scenario: { ...scenario, maxTicks: 4 },
+        participants: [
+          {
+            keyPair: alice,
+            adapter: eager,
+            humanRoot: deterministicKeyPair("human-one"),
+            declaredAutonomy: "autonomous",
+          },
+        ],
+      }),
+    );
+
+    const events = [];
+    for await (const event of result.store.read(result.runId)) events.push(event);
+    const rejected = events.filter((e) => e.eventType === EventTypes.RELEASE_REJECTED);
+
+    expect(rejected.length).toBeGreaterThan(0);
+    expect((rejected[0]?.payload as { failures: string[] }).failures.join(" ")).toContain(
+      "operating-period",
+    );
+    expect(result.shipped).toBe(false);
+  });
+
+  it("deploys to production and health-checks the artifact", async () => {
+    const result = await executeRun(baseConfig({ runId: "run-deploy" }));
+    const events = [];
+    for await (const event of result.store.read(result.runId)) events.push(event);
+    const deployed = events.filter((e) => e.eventType === EventTypes.DEPLOYMENT_COMPLETED);
+
+    expect(deployed.length).toBeGreaterThan(0);
+    const payload = deployed[0]?.payload as {
+      status: string;
+      healthChecksPassed: number;
+      healthChecksTotal: number;
+      capabilityGrantId: string;
+    };
+    expect(payload.status).toBe("healthy");
+    expect(payload.healthChecksPassed).toBe(payload.healthChecksTotal);
+    // Deployment is capability-gated, and the grant relied upon is recorded.
+    expect(payload.capabilityGrantId).not.toBe("");
+  });
+
+  it("requires deployment authority separately from repository authority", async () => {
+    // §20.2: an organization able to commit must not thereby be able to deploy.
+    const result = await executeRun(baseConfig({ runId: "run-deploy-auth" }));
+    const events = [];
+    for await (const event of result.store.read(result.runId)) events.push(event);
+
+    const grants = events.filter((e) => e.eventType === EventTypes.CAPABILITY_GRANTED);
+    const namespaces = grants.map((e) => (e.payload as { namespace: string }).namespace);
+    expect(namespaces).toContain("deploy.production");
+    // And the deploy grant came from its own proposal, not bundled into the repo one.
+    expect(new Set(namespaces).size).toBeGreaterThan(1);
+  });
+
+  it("establishes offices at genesis, vacant", async () => {
+    // §18.7: a vacancy is filled by election, not appointment. Nothing installs a holder.
+    const result = await executeRun(baseConfig({ runId: "run-offices" }));
+    const office = result.state.offices.byId.get("release-manager");
+    expect(office).toBeDefined();
+    expect(office?.capabilityNamespaces).toContain("deploy.production");
+    expect(office?.exclusive).toBe(true);
+    expect(office?.current).toBeUndefined();
   });
 });

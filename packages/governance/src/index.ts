@@ -22,6 +22,24 @@ export {
 } from "./tally.js";
 
 export {
+  emptyOfficeRegistry,
+  expiredOffices,
+  officeDefinitionsFrom,
+  officesHeldBy,
+  officesOfSuspended,
+  removeFromOffice,
+  takeOffice,
+  vacantOffices,
+  type OfficeDefinition,
+  type OfficeEffect,
+  type OfficeEndReason,
+  type OfficeOutcome,
+  type OfficeRegistry,
+  type OfficeState,
+  type OfficeTerm,
+} from "./offices.js";
+
+export {
   CAPABILITY_VOCABULARY,
   GENESIS_CONSTITUTION,
   PROTECTED_RULE_IDS,

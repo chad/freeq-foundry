@@ -27,10 +27,39 @@ import {
 } from "./wellknown.js";
 import { OBSERVER_HTML } from "./observer-ui.js";
 
+/**
+ * Admits an external applicant.
+ *
+ * Supplied by the host rather than built here, because admission needs the run's
+ * credential registry, revocation state, and lineage ceilings — and a server that
+ * held those would be a second place authority lives.
+ */
+export interface ExternalAdmission {
+  /** Issue a key-possession challenge (§6.3). */
+  challenge(did: string): Promise<{ readonly challenge: unknown } | { readonly error: string }>;
+  /** Verify a proof and a signed challenge, then admit or refuse. */
+  admit(request: {
+    readonly proof: unknown;
+    readonly challengeResponse: unknown;
+  }): Promise<
+    | { readonly admitted: true; readonly admissionCredentialId: string; readonly lineagePseudonym: string }
+    | { readonly admitted: false; readonly reason: string; readonly detail: string; readonly findings?: unknown }
+  >;
+}
+
 export interface ServerOptions {
   readonly gateway: Gateway;
   readonly store: EventStore;
   readonly runId: string;
+  /**
+   * Present only when the run accepts external participants.
+   *
+   * Absent by default: a run that has not opted in refuses admission rather than
+   * silently accepting strangers.
+   */
+  readonly admission?: ExternalAdmission;
+  /** Whether `POST /api/events` accepts submissions from admitted participants. */
+  readonly acceptSubmissions?: boolean;
   readonly discovery: Omit<DiscoveryOptions, "baseUrl">;
   readonly host?: string;
   readonly port?: number;
@@ -177,6 +206,52 @@ export class FoundryServer {
       return;
     }
 
+    if (path === "/.well-known/freeq-agent/challenge" && request.method === "POST") {
+      if (this.#options.admission === undefined) {
+        respondJson(response, 503, {
+          error: "this run does not accept external participants",
+          remediation:
+            "Start the run with external admission enabled. A run that has not opted in " +
+            "refuses admission rather than silently accepting strangers.",
+        });
+        return;
+      }
+      const body = (await readJson(request)) as { did?: unknown } | undefined;
+      if (typeof body?.did !== "string") {
+        respondJson(response, 400, { error: 'body must be {"did":"did:..."}' });
+        return;
+      }
+      const issued = await this.#options.admission.challenge(body.did);
+      if ("error" in issued) {
+        respondJson(response, 422, { error: issued.error });
+        return;
+      }
+      respondJson(response, 200, issued);
+      return;
+    }
+
+    if (path === "/api/admission" && request.method === "POST") {
+      if (this.#options.admission === undefined) {
+        respondJson(response, 503, { error: "this run does not accept external participants" });
+        return;
+      }
+      const body = (await readJson(request)) as
+        | { proof?: unknown; challengeResponse?: unknown }
+        | undefined;
+      if (body === undefined) {
+        respondJson(response, 400, { error: "body must be JSON" });
+        return;
+      }
+      const outcome = await this.#options.admission.admit({
+        proof: body.proof,
+        challengeResponse: body.challengeResponse,
+      });
+      // 403 rather than 422: the request was well formed and the applicant was
+      // refused, which is a different thing from a malformed application.
+      respondJson(response, outcome.admitted ? 201 : 403, outcome);
+      return;
+    }
+
     if (path === "/.well-known/freeq-agent/diagnose" && request.method === "POST") {
       const body = await readJson(request);
       if (body === undefined) {
@@ -190,6 +265,15 @@ export class FoundryServer {
     // ---- API (§36) ----
 
     if (path === "/api/events" && request.method === "POST") {
+      if (this.#options.acceptSubmissions !== true) {
+        respondJson(response, 503, {
+          error: "this run does not accept external submissions",
+          remediation:
+            "The run is driven by its own participants. Start it with submissions " +
+            "enabled to accept events from external operators.",
+        });
+        return;
+      }
       const body = await readJson(request);
       if (body === undefined) {
         respondJson(response, 400, { error: "body must be JSON" });

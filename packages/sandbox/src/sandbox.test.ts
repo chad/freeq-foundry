@@ -249,3 +249,49 @@ describe("secret scanning: patterns that leak a key without storing one", () => 
     expect(findings.map((f) => f.path).sort()).toEqual(["a.mjs", "b.mjs"]);
   });
 });
+
+describe("container sandbox", () => {
+  it("describes container-level isolation and its remaining limit", async () => {
+    const { ContainerSandbox } = await import("./container.js");
+    const container = new ContainerSandbox();
+    expect(container.isolation).toContain("--network=none");
+    expect(container.isolation).toContain("read-only root");
+    // Honest about what it still does not provide: a container escape reaches the host.
+    expect(container.isolation).toContain("microVM is required");
+  });
+
+  it("detects an unavailable runtime rather than failing mid-run", async () => {
+    const { ContainerSandbox } = await import("./container.js");
+    const container = new ContainerSandbox({
+      runtime: "definitely-not-a-real-runtime-binary",
+    });
+    expect(await container.available()).toBe(false);
+  });
+
+  it("refuses to fall back when container isolation was required", async () => {
+    // A silent downgrade would let a run believe it had isolation it does not have.
+    const { bestAvailableSandbox } = await import("./container.js");
+    await expect(
+      bestAvailableSandbox({
+        runtime: "definitely-not-a-real-runtime-binary",
+        requireContainer: true,
+      }),
+    ).rejects.toThrow(/Refusing to fall back/);
+  });
+
+  it("falls back with a conspicuous note when not required", async () => {
+    const { bestAvailableSandbox } = await import("./container.js");
+    const chosen = await bestAvailableSandbox({
+      runtime: "definitely-not-a-real-runtime-binary",
+    });
+    expect(chosen.note).toContain("FELL BACK");
+    expect(chosen.note).toContain("NOT sufficient for untrusted code");
+  });
+
+  it("validates a request before touching the runtime", async () => {
+    const { ContainerSandbox } = await import("./container.js");
+    const container = new ContainerSandbox({ runtime: "not-real" });
+    const result = await container.run({ files: new Map(), entryPoint: "main.mjs" });
+    expect(result.outcome).toBe("rejected");
+  });
+});

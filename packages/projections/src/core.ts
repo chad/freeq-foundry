@@ -21,6 +21,10 @@ import {
   type CapabilityGrantedPayload,
   type ConstitutionAdoptedPayload,
   type ConstitutionRule,
+  type NominationPayload,
+  type OfficeAssignedPayload,
+  type OfficeCreatedPayload,
+  type OfficeVacatedPayload,
   type ParticipantAdmittedPayload,
   type ParticipantSuspendedPayload,
   type ProposalClosedPayload,
@@ -574,6 +578,145 @@ export function authorityConcentration(
 }
 
 // ---------------------------------------------------------------------------
+// Offices (§18)
+// ---------------------------------------------------------------------------
+
+export interface OfficeTermState {
+  readonly holderDid: string;
+  readonly startedAtLogicalTime: number;
+  readonly expiresAtLogicalTime: number;
+  readonly grantIds: readonly string[];
+  readonly endedAtLogicalTime?: number;
+  readonly endReason?: string;
+}
+
+export interface OfficeRecord {
+  readonly officeId: string;
+  readonly title: string;
+  readonly capabilityNamespaces: readonly string[];
+  readonly termLogicalTime: number;
+  readonly electionMethod: string;
+  readonly tieBreaks: readonly string[];
+  readonly exclusive: boolean;
+  readonly removalThresholdPct: number;
+  readonly current?: OfficeTermState;
+  readonly history: readonly OfficeTermState[];
+  readonly nominations: readonly { readonly candidateId: string; readonly candidateDid: string; readonly atLogicalTime: number }[];
+}
+
+export interface OfficesState {
+  readonly byId: ReadonlyMap<string, OfficeRecord>;
+  /** Completed terms, for leadership-turnover analysis (§40.2). */
+  readonly completedTerms: number;
+}
+
+export const officesProjector: Projector<OfficesState> = {
+  id: "offices",
+  version: 1,
+  initialState: () => ({ byId: new Map(), completedTerms: 0 }),
+  apply(state, event) {
+    switch (event.eventType) {
+      case EventTypes.OFFICE_CREATED: {
+        const payload = payloadOf<OfficeCreatedPayload>(event);
+        const byId = new Map(state.byId);
+        byId.set(payload.officeId, {
+          officeId: payload.officeId,
+          title: payload.title,
+          capabilityNamespaces: payload.capabilityNamespaces,
+          termLogicalTime: payload.termLogicalTime,
+          electionMethod: payload.electionMethod,
+          tieBreaks: payload.tieBreaks,
+          exclusive: payload.exclusive ?? false,
+          removalThresholdPct: payload.removalThresholdPct ?? 50,
+          history: [],
+          nominations: [],
+        });
+        return { ...state, byId };
+      }
+
+      case EventTypes.NOMINATION_MADE: {
+        const payload = payloadOf<NominationPayload>(event);
+        const office = state.byId.get(payload.officeId);
+        if (office === undefined) return state;
+        const byId = new Map(state.byId);
+        byId.set(payload.officeId, {
+          ...office,
+          nominations: [
+            // A repeat nomination does not create a second candidate.
+            ...office.nominations.filter((n) => n.candidateId !== payload.candidateId),
+            {
+              candidateId: payload.candidateId,
+              candidateDid: payload.candidateDid,
+              atLogicalTime: event.logicalTime,
+            },
+          ],
+        });
+        return { ...state, byId };
+      }
+
+      case EventTypes.OFFICE_ASSIGNED: {
+        const payload = payloadOf<OfficeAssignedPayload>(event);
+        const office = state.byId.get(payload.officeId);
+        if (office === undefined) return state;
+        const byId = new Map(state.byId);
+        byId.set(payload.officeId, {
+          ...office,
+          current: {
+            holderDid: payload.holderDid,
+            startedAtLogicalTime: event.logicalTime,
+            expiresAtLogicalTime: payload.expiresAtLogicalTime,
+            grantIds: payload.grantIds,
+          },
+          // Nominations are cleared on assignment: a stale candidate list would let a
+          // later election reuse nominations nobody restated.
+          nominations: [],
+        });
+        return { ...state, byId };
+      }
+
+      case EventTypes.OFFICE_VACATED: {
+        const payload = payloadOf<OfficeVacatedPayload>(event);
+        const office = state.byId.get(payload.officeId);
+        if (office === undefined || office.current === undefined) return state;
+        const byId = new Map(state.byId);
+        const ended: OfficeTermState = {
+          ...office.current,
+          endedAtLogicalTime: event.logicalTime,
+          endReason: payload.reason,
+        };
+        const { current: _dropped, ...rest } = office;
+        byId.set(payload.officeId, {
+          ...rest,
+          history: [...office.history, ended],
+          nominations: [],
+        });
+        return { byId, completedTerms: state.completedTerms + 1 };
+      }
+
+      default:
+        return state;
+    }
+  },
+};
+
+/** Offices a participant currently holds. */
+export function officesHeld(state: OfficesState, did: string): readonly string[] {
+  return [...state.byId.values()]
+    .filter((office) => office.current?.holderDid === did)
+    .map((office) => office.officeId);
+}
+
+/**
+ * Leadership turnover: completed terms per office created (§40.2).
+ *
+ * High turnover is not automatically bad — an organization that recalls an
+ * underperforming holder is working. Reported, not optimized against.
+ */
+export function leadershipTurnover(state: OfficesState): number {
+  return state.byId.size === 0 ? 0 : state.completedTerms / state.byId.size;
+}
+
+// ---------------------------------------------------------------------------
 // Treasury
 // ---------------------------------------------------------------------------
 
@@ -785,6 +928,7 @@ export const coreProjectors = [
   participantsProjector,
   constitutionProjector,
   proposalsProjector,
+  officesProjector,
   capabilitiesProjector,
   treasuryProjector,
   outcomeProjector,

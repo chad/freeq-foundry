@@ -43,6 +43,9 @@
     },
     {
       "path": "../model-adapters"
+    },
+    {
+      "path": "../deployment"
     }
   ],
   "include": [

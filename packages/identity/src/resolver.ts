@@ -138,15 +138,42 @@ export class DidResolverRegistry {
         `DID document for ${did} exposes no verification method`,
       );
     }
-    // did:key is the only method today, so the raw key round-trips through the
-    // identifier. A method with rotation will need to select by key id.
-    return publicKeyFromDidKey(did);
+    if (did.startsWith("did:key:")) {
+      // The key is in the identifier, so this round-trips without trusting the
+      // document we just built from it.
+      return publicKeyFromDidKey(did);
+    }
+    // For a resolved document, build the key from the published material. Uses the
+    // first Ed25519 method; a document with several would need selection by key id,
+    // which no supported method requires yet.
+    const { publicKeyFromRaw } = await import("@freeq-foundry/protocol");
+    return publicKeyFromRaw(Uint8Array.from(Buffer.from(method.publicKeyHex, "hex")));
   }
 }
 
-/** A registry with the methods supported today. */
+/**
+ * A registry with `did:key` only.
+ *
+ * The offline default: no network in the verification path, which is what makes
+ * conformance tests runnable without infrastructure (ADR-0003).
+ */
 export function defaultResolvers(): DidResolverRegistry {
   return new DidResolverRegistry().register(new DidKeyResolver());
+}
+
+/**
+ * A registry including `did:web`, for admitting external operators.
+ *
+ * Separate from the default so nothing acquires a network dependency by accident. A
+ * run that admits strangers needs this; a run that does not should not have it.
+ */
+export async function resolversWithWeb(
+  options: import("./didweb.js").DidWebOptions = {},
+): Promise<DidResolverRegistry> {
+  const { DidWebResolver } = await import("./didweb.js");
+  return new DidResolverRegistry()
+    .register(new DidKeyResolver())
+    .register(new DidWebResolver(options));
 }
 
 /**

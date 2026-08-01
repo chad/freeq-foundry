@@ -69,6 +69,13 @@ export type ActionRequest =
       readonly note?: string;
     }
   | { readonly type: "merge_pull_request"; readonly pullRequestId: string }
+  | {
+      readonly type: "deploy";
+      readonly environment: "preview" | "production";
+      readonly deploymentId: string;
+    }
+  | { readonly type: "rollback"; readonly environment: "preview" | "production" }
+  | { readonly type: "nominate"; readonly officeId: string; readonly statement?: string }
   | { readonly type: "submit_release"; readonly releaseId: string };
 
 /** What an agent knows when deciding (§24.4). Read-only: agents cannot mutate state. */
@@ -145,6 +152,24 @@ export interface AgentView {
     readonly description: string;
     readonly mandatory: boolean;
   }[];
+  /** Offices, their holders, and their terms (§18). */
+  readonly offices: readonly {
+    readonly officeId: string;
+    readonly title: string;
+    readonly holderDid?: string;
+    readonly expiresAtLogicalTime?: number;
+    readonly capabilityNamespaces: readonly string[];
+    readonly iAmNominated: boolean;
+  }[];
+  /** Current deployment state, so an agent knows whether anything is running. */
+  readonly deployments: readonly {
+    readonly environment: string;
+    readonly status: string;
+    readonly commitHash: string;
+    readonly atLogicalTime: number;
+  }[];
+  /** True once production has been healthy long enough to satisfy §9.4. */
+  readonly productionSurvivedOperatingPeriod: boolean;
 }
 
 /**
@@ -241,11 +266,58 @@ export function builderAgent(id: string, selfDid: string): DeterministicAgent {
   void selfDid; // The view supplies the agent's own DID; this is kept for the label.
   return new DeterministicAgent(id, [
     {
-      // First, deliberately. Rule order is the priority mechanism, and an agent
-      // that opens another proposal when the work is already finished is burning
-      // the horizon the outcome is measured against.
-      name: "submit a release once the work is merged",
-      when: (view) => view.workComplete && !view.currentCommitRejected,
+      // Before submitting: §9.4 requires the product to survive an operating period,
+      // so a release cannot be verified until something has actually been running.
+      name: "deploy to production once the work is merged",
+      when: (view) =>
+        view.workComplete &&
+        hasCapability(view, "deploy.production") &&
+        !view.deployments.some(
+          (d) => d.environment === "production" && d.status === "healthy",
+        ),
+      then: (view) => [
+        {
+          type: "deploy",
+          environment: "production",
+          deploymentId: `deploy-${view.logicalTime}`,
+        },
+      ],
+    },
+    {
+      name: "propose deployment authority once the work is merged",
+      when: (view) =>
+        view.workComplete &&
+        !hasCapability(view, "deploy.production") &&
+        view.openProposals.length === 0,
+      then: (view) => [
+        {
+          type: "open_proposal",
+          kind: "capability_grant",
+          title: "Grant production deployment authority",
+          rationale:
+            "The work is merged but nothing is deployed, and the product must survive an " +
+            "operating period before it can be accepted.",
+          constitutionalBasis: "genesis.proposal_rights",
+          closesAfterLogicalTicks: 4,
+          actions: [
+            {
+              type: "grant_capability",
+              toDid: view.selfDid,
+              namespace: "deploy.production",
+              redelegable: false,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      // Rule order is the priority mechanism, and an agent that opens another proposal
+      // when the work is finished is burning the horizon it is measured against.
+      name: "submit a release once the work is merged and deployed",
+      when: (view) =>
+        view.workComplete &&
+        !view.currentCommitRejected &&
+        view.productionSurvivedOperatingPeriod,
       then: (view) => [
         { type: "submit_release", releaseId: `release-${view.logicalTime}` },
       ],
@@ -282,6 +354,15 @@ export function builderAgent(id: string, selfDid: string): DeterministicAgent {
           },
         ];
       },
+    },
+    {
+      name: "roll back an unhealthy production deployment",
+      when: (view) =>
+        hasCapability(view, "deploy.rollback") &&
+        view.deployments.some(
+          (d) => d.environment === "production" && d.status === "unhealthy",
+        ),
+      then: () => [{ type: "rollback", environment: "production" }],
     },
     {
       name: "merge an approved pull request",

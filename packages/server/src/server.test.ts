@@ -54,7 +54,27 @@ beforeEach(async () => {
     gateway: new Gateway({ store, admissions, maxClockSkewMs: Number.MAX_SAFE_INTEGER }),
     store,
     runId: RUN,
+    acceptSubmissions: true,
+    admission: {
+      challenge: async (did) =>
+        did.startsWith("did:")
+          ? { challenge: { challengeId: "c-1", subjectDid: did, nonce: "n" } }
+          : { error: `${did} is not a DID` },
+      admit: async (request) =>
+        (request.proof as { valid?: boolean } | undefined)?.valid === true
+          ? {
+              admitted: true as const,
+              admissionCredentialId: "adm-external-1",
+              lineagePseudonym: "L-ext",
+            }
+          : {
+              admitted: false as const,
+              reason: "provenance_invalid",
+              detail: "condition 3: signature does not verify",
+            },
+    },
     discovery: {
+      acceptingSubmissions: true,
       runId: RUN,
       acceptingParticipants: true,
       recorderDid: recorder.did,
@@ -279,9 +299,9 @@ describe("observer", () => {
 });
 
 describe("discovery document shape", () => {
-  it("names did:web as unsupported rather than omitting it", () => {
-    // Silence would read as "supported"; an operator needs to know why their did:web
-    // identifier is refused.
+  it("says why did:web is refused when it is not enabled", () => {
+    // Silence would read as "supported"; an operator needs to know why their
+    // identifier is refused, and what to use instead.
     const document = discoveryDocument({
       baseUrl: "http://x",
       acceptingParticipants: true,
@@ -289,7 +309,23 @@ describe("discovery document shape", () => {
       evaluatorDid: "did:key:zE",
       lineageConstraints: { maxDepth: 4, maxFanOutPerRoot: 8 },
     });
-    expect(JSON.stringify(document["identity"])).toContain("did:web is not yet supported");
+    expect(JSON.stringify(document["identity"])).toContain("did:web is not enabled");
+  });
+
+  it("explains did:web rotation semantics when it is enabled", () => {
+    // Rotation happens through credentials, not document mutation (ADR-0003), and an
+    // operator who edits their document expecting old signatures to break needs telling.
+    const document = discoveryDocument({
+      baseUrl: "http://x",
+      acceptingParticipants: true,
+      supportedDidMethods: ["key", "web"],
+      recorderDid: "did:key:zR",
+      evaluatorDid: "did:key:zE",
+      lineageConstraints: { maxDepth: 4, maxFanOutPerRoot: 8 },
+    });
+    const identity = JSON.stringify(document["identity"]);
+    expect(identity).toContain("cached as run artifacts");
+    expect(identity).toContain("not by editing the document");
   });
 
   it("renders markdown that explains the two-signature model", () => {
@@ -302,6 +338,73 @@ describe("discovery document shape", () => {
     });
     expect(text).toContain("Two signatures per event");
     expect(text).toContain("did:key:zRecorder");
+  });
+});
+
+describe("external participation", () => {
+  it("issues a key-possession challenge", async () => {
+    const response = await fetch(`${base}/.well-known/freeq-agent/challenge`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ did: alice.did }),
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()) as Record<string, unknown>).toHaveProperty("challenge");
+  });
+
+  it("admits an applicant whose proof verifies", async () => {
+    const response = await fetch(`${base}/api/admission`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ proof: { valid: true }, challengeResponse: {} }),
+    });
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { admitted: boolean; admissionCredentialId: string };
+    expect(body.admitted).toBe(true);
+    expect(body.admissionCredentialId).toBe("adm-external-1");
+  });
+
+  it("refuses a bad proof with 403 and a specific reason", async () => {
+    // 403, not 422: the request was well formed and the applicant was refused, which
+    // is a different thing from a malformed application.
+    const response = await fetch(`${base}/api/admission`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ proof: { valid: false }, challengeResponse: {} }),
+    });
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as { reason: string; detail: string };
+    expect(body.reason).toBe("provenance_invalid");
+    expect(body.detail).toContain("condition 3");
+  });
+
+  it("refuses admission when the run has not opted in", async () => {
+    // A run that has not opted in refuses strangers rather than silently accepting them.
+    const closed = new FoundryServer({
+      gateway: new Gateway({
+        store,
+        admissions: new StaticAdmissionRegistry(),
+        maxClockSkewMs: Number.MAX_SAFE_INTEGER,
+      }),
+      store,
+      runId: RUN,
+      discovery: {
+        runId: RUN,
+        acceptingParticipants: false,
+        recorderDid: recorder.did,
+        evaluatorDid: deterministicKeyPair("evaluator").did,
+        lineageConstraints: { maxDepth: 4, maxFanOutPerRoot: 8 },
+      },
+    });
+    const url = await closed.listen();
+    try {
+      expect((await fetch(`${url}/api/admission`, { method: "POST", body: "{}" })).status).toBe(503);
+      expect(
+        (await fetch(`${url}/api/events`, { method: "POST", body: "{}" })).status,
+      ).toBe(503);
+    } finally {
+      await closed.close();
+    }
   });
 });
 

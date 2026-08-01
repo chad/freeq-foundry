@@ -5,9 +5,19 @@
  * lineage was recorded in every event and verified nowhere.
  */
 export {
+  DidWebResolver,
+  didWebToUrl,
+  exampleDidDocument,
+  parseDidDocument,
+  type CachedResolution,
+  type DidWebOptions,
+} from "./didweb.js";
+
+export {
   DidKeyResolver,
   DidResolverRegistry,
   defaultResolvers,
+  resolversWithWeb,
   methodValidAt,
   type DidDocument,
   type DidResolution,

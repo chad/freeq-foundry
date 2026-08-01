@@ -29,6 +29,9 @@ const view = (overrides: Partial<AgentView> = {}): AgentView => ({
   mergeablePullRequests: [],
   openPullRequestsAuthoredByMe: [],
   acceptanceCriteria: [],
+  offices: [],
+  deployments: [],
+  productionSurvivedOperatingPeriod: false,
   ...overrides,
 });
 
@@ -237,9 +240,59 @@ describe("builder agent", () => {
     ).not.toBe("submit_release");
   });
 
-  it("submits a release once the work is merged", () => {
+  it("deploys before submitting, since §9.4 needs an operating period", () => {
+    // A release verified the instant it deployed has not been observed running.
+    const requests = agent.decide(
+      view({
+        workComplete: true,
+        myGrants: [{ grantId: "g1", namespace: "deploy.production" }],
+      }),
+    );
+    expect(requests[0]).toMatchObject({ type: "deploy", environment: "production" });
+  });
+
+  it("proposes deployment authority when it has none", () => {
     const requests = agent.decide(view({ workComplete: true }));
+    expect(requests[0]?.type).toBe("open_proposal");
+    if (requests[0]?.type === "open_proposal") {
+      expect(requests[0].actions[0]).toMatchObject({ namespace: "deploy.production" });
+    }
+  });
+
+  it("submits a release once the work is merged and has been running", () => {
+    const requests = agent.decide(
+      view({
+        workComplete: true,
+        productionSurvivedOperatingPeriod: true,
+        myGrants: [{ grantId: "g1", namespace: "deploy.production" }],
+        deployments: [
+          {
+            environment: "production",
+            status: "healthy",
+            commitHash: "sha256:abc",
+            atLogicalTime: 1,
+          },
+        ],
+      }),
+    );
     expect(requests[0]?.type).toBe("submit_release");
+  });
+
+  it("rolls back an unhealthy production deployment", () => {
+    const requests = agent.decide(
+      view({
+        myGrants: [{ grantId: "g1", namespace: "deploy.rollback" }],
+        deployments: [
+          {
+            environment: "production",
+            status: "unhealthy",
+            commitHash: "sha256:abc",
+            atLogicalTime: 1,
+          },
+        ],
+      }),
+    );
+    expect(requests[0]).toMatchObject({ type: "rollback", environment: "production" });
   });
 });
 

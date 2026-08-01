@@ -54,6 +54,7 @@ export const EventTypes = {
   NOMINATION_MADE: "election.nomination_made",
   ELECTION_OPENED: "election.opened",
   ELECTION_DECIDED: "election.decided",
+  OFFICE_ASSIGNED: "election.office_assigned",
   OFFICE_VACATED: "election.office_vacated",
 
   // delegation
@@ -89,6 +90,10 @@ export const EventTypes = {
 
   // model
   MODEL_INVOKED: "model.invoked",
+
+  // deployment
+  DEPLOYMENT_COMPLETED: "deployment.completed",
+  DEPLOYMENT_ROLLED_BACK: "deployment.rolled_back",
 
   // evaluation
   RELEASE_SUBMITTED: "evaluation.release_submitted",
@@ -256,6 +261,39 @@ export interface ProposalExecutedPayload {
   readonly proposalId: string;
   readonly appliedActions: number;
   readonly grantIds?: readonly string[];
+}
+
+export interface OfficeCreatedPayload {
+  readonly officeId: string;
+  readonly title: string;
+  readonly capabilityNamespaces: readonly string[];
+  readonly termLogicalTime: number;
+  readonly electionMethod: string;
+  readonly tieBreaks: readonly string[];
+  readonly exclusive?: boolean;
+  readonly removalThresholdPct?: number;
+}
+
+export interface OfficeAssignedPayload {
+  readonly officeId: string;
+  readonly holderDid: string;
+  readonly expiresAtLogicalTime: number;
+  /** Grants issued for the term, revoked when it ends. */
+  readonly grantIds: readonly string[];
+}
+
+export interface OfficeVacatedPayload {
+  readonly officeId: string;
+  readonly holderDid: string;
+  readonly reason: "term_expired" | "removed" | "resigned" | "suspended";
+  readonly revokedGrantIds: readonly string[];
+}
+
+export interface NominationPayload {
+  readonly officeId: string;
+  readonly candidateId: string;
+  readonly candidateDid: string;
+  readonly statement?: string;
 }
 
 export interface CapabilityGrantedPayload {

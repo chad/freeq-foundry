@@ -28,6 +28,10 @@ export interface DiscoveryOptions {
   readonly baseUrl: string;
   readonly runId?: string;
   readonly acceptingParticipants: boolean;
+  /** Methods this run will resolve. `web` requires opting in (ADR-0003). */
+  readonly supportedDidMethods?: readonly string[];
+  /** Whether external operators may submit events. */
+  readonly acceptingSubmissions?: boolean;
   readonly recorderDid: string;
   readonly evaluatorDid: string;
   readonly lineageConstraints: { readonly maxDepth: number; readonly maxFanOutPerRoot: number };
@@ -49,6 +53,7 @@ export function discoveryDocument(options: DiscoveryOptions): Record<string, unk
     run: {
       runId: options.runId ?? null,
       acceptingParticipants: options.acceptingParticipants,
+      acceptingSubmissions: options.acceptingSubmissions ?? false,
       // Published so a verifier can check event position attestation without asking
       // (ADR-0008), and so nobody has to trust an event that names its own recorder.
       recorderDid: options.recorderDid,
@@ -58,13 +63,20 @@ export function discoveryDocument(options: DiscoveryOptions): Record<string, unk
     },
 
     identity: {
-      supportedDidMethods: ["key"],
+      supportedDidMethods: options.supportedDidMethods ?? ["key"],
       didKeyPrefix: DID_KEY_PREFIX,
       signatureSuite: "Ed25519",
       signatureEncoding: "base64url-unpadded",
       note:
-        "did:web is not yet supported. It is required before any public run, because " +
-        "operators need identifiers they control and can rotate.",
+        (options.supportedDidMethods ?? ["key"]).includes("web")
+          ? "did:web documents are fetched once and cached as run artifacts, so replay " +
+            "does not depend on your server still serving the same bytes. Rotate keys by " +
+            "issuing a new credential, not by editing the document: a changed document " +
+            "does not retroactively invalidate signatures made with a key that was valid."
+          : "did:web is not enabled for this run. Use did:key, which needs no hosting.",
+      didWebExample:
+        "Serve a DID document at https://<host>/.well-known/did.json containing an " +
+        'Ed25519 OKP JWK: {"kty":"OKP","crv":"Ed25519","x":"<base64url>"}',
     },
 
     canonicalization: {

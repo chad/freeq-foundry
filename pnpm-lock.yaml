@@ -114,6 +114,9 @@ importers:
       '@freeq-foundry/capabilities':
         specifier: workspace:*
         version: link:../capabilities
+      '@freeq-foundry/deployment':
+        specifier: workspace:*
+        version: link:../deployment
       '@freeq-foundry/evaluation':
         specifier: workspace:*
         version: link:../evaluation
@@ -144,6 +147,25 @@ importers:
       '@freeq-foundry/repository':
         specifier: workspace:*
         version: link:../repository
+      '@freeq-foundry/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.7(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.1)
+
+  packages/deployment:
+    dependencies:
+      '@freeq-foundry/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@freeq-foundry/sandbox':
         specifier: workspace:*
         version: link:../sandbox

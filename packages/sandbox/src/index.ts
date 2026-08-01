@@ -6,6 +6,12 @@
  * container-level, and says so.
  */
 export {
+  ContainerSandbox,
+  bestAvailableSandbox,
+  type ContainerSandboxOptions,
+} from "./container.js";
+
+export {
   DEFAULT_LIMITS,
   NodeSubprocessSandbox,
   scanForSecrets,

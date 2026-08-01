@@ -41,6 +41,8 @@ import {
 import {
   EventTypes,
   activityProjector,
+  officesProjector,
+  type OfficesState,
   capabilitiesProjector,
   constitutionProjector,
   coreProjectors,
@@ -77,6 +79,21 @@ import {
   type RouteOutcome,
 } from "@freeq-foundry/model-adapters";
 import { Repository, type MergePolicy } from "@freeq-foundry/repository";
+import {
+  DeploymentLedger,
+  deploy as deployArtifact,
+  survivedOperatingPeriod,
+} from "@freeq-foundry/deployment";
+import {
+  emptyOfficeRegistry,
+  expiredOffices,
+  officesOfSuspended,
+  removeFromOffice,
+  takeOffice,
+  type OfficeDefinition,
+  type OfficeRegistry,
+  type OfficeState as GovernanceOfficeState,
+} from "@freeq-foundry/governance";
 import { NodeSubprocessSandbox, type Sandbox } from "@freeq-foundry/sandbox";
 import {
   evaluateRelease,
@@ -104,6 +121,14 @@ export interface Scenario {
   readonly msPerTick?: number;
   readonly mergePolicy?: MergePolicy;
   readonly mainBranch?: string;
+  /** Offices the scenario establishes at genesis (§18). */
+  readonly offices?: readonly OfficeDefinition[];
+  /**
+   * Logical ticks a production deployment must stay healthy before a release can be
+   * verified (§9.4). A release verified the instant it deployed has not been observed
+   * running.
+   */
+  readonly minimumOperatingTicks?: number;
 }
 
 /** The `webhook-saas-v1` scenario: a real, small product. */
@@ -117,6 +142,21 @@ export function webhookScenario(overrides: Partial<Scenario> = {}): Scenario {
     maxTicks: 120,
     msPerTick: 60_000,
     mainBranch: "main",
+    minimumOperatingTicks: 2,
+    offices: [
+      {
+        officeId: "release-manager",
+        title: "Release Manager",
+        // The §18 point: authority attaches to the office for a term and then stops.
+        capabilityNamespaces: ["deploy.production", "deploy.rollback"],
+        termLogicalTime: 60,
+        electionMethod: "approval",
+        tieBreaks: ["earliest_nomination", "lowest_did"],
+        // §18.8: whoever ships must not also be the only reviewer.
+        exclusive: true,
+        removalThresholdPct: 50,
+      },
+    ],
     ...overrides,
   };
 }
@@ -195,6 +235,7 @@ export interface RunConfig {
 export interface RunResult {
   readonly runId: string;
   readonly repository: Repository;
+  readonly deployments: DeploymentLedger;
   /** Signed evaluator verdicts, in order. */
   readonly evaluations: readonly Awaited<ReturnType<typeof evaluateRelease>>[];
   /**
@@ -216,6 +257,7 @@ export interface RunResult {
   readonly store: InMemoryEventStore;
   readonly state: {
     readonly run: RunState;
+    readonly offices: OfficesState;
     readonly participants: ParticipantsState;
     readonly constitution: ConstitutionState;
     readonly proposals: ProposalsState;
@@ -350,6 +392,7 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
   const sandbox = config.sandbox ?? new NodeSubprocessSandbox();
   const evaluations: Awaited<ReturnType<typeof evaluateRelease>>[] = [];
   const invocations = new InvocationRecorder();
+  const deployments = new DeploymentLedger();
   /** Queued invocation events, appended after the activation that produced them. */
   const pendingInvocations: {
     did: string;
@@ -497,6 +540,23 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     capabilityGrantId: "genesis",
   });
 
+  // Offices exist from genesis but are vacant: §18.7 fills a vacancy by election, not
+  // by appointment, and nothing here can install a holder.
+  for (const office of scenario.offices ?? []) {
+    await writer.append(config.controller.did, EventTypes.OFFICE_CREATED, {
+      officeId: office.officeId,
+      title: office.title,
+      capabilityNamespaces: office.capabilityNamespaces,
+      termLogicalTime: office.termLogicalTime,
+      electionMethod: office.electionMethod,
+      tieBreaks: office.tieBreaks,
+      ...(office.exclusive === undefined ? {} : { exclusive: office.exclusive }),
+      ...(office.removalThresholdPct === undefined
+        ? {}
+        : { removalThresholdPct: office.removalThresholdPct }),
+    });
+  }
+
   for (const item of scenario.workItems) {
     await writer.append(config.controller.did, EventTypes.WORK_ITEM_OPENED, {
       workItemId: item.workItemId,
@@ -537,6 +597,7 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     const snapshots = projectAll(coreProjectors as never, events, config.runId);
     return {
       run: snapshots.get(runProjector.id)?.state as RunState,
+      offices: snapshots.get(officesProjector.id)?.state as OfficesState,
       participants: snapshots.get(participantsProjector.id)?.state as ParticipantsState,
       constitution: snapshots.get(constitutionProjector.id)?.state as ConstitutionState,
       proposals: snapshots.get(proposalsProjector.id)?.state as ProposalsState,
@@ -596,6 +657,31 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
       }
     }
 
+    // Sweep offices before agents act. A term that quietly ran over would leave
+    // authority in place indefinitely, and a suspended holder must not keep an
+    // office's grants (§11.10).
+    {
+      const swept = await readState();
+      const registry = officeRegistryFrom(swept.offices, scenario.offices ?? []);
+      for (const effect of [
+        ...expiredOffices(registry, swept.logicalTime),
+        ...officesOfSuspended(registry, swept.participants),
+      ]) {
+        if (effect.kind !== "vacate_office") continue;
+        for (const grantId of effect.revokeGrantIds) {
+          await writer.append(config.controller.did, EventTypes.CAPABILITY_REVOKED, {
+            grantId,
+          });
+        }
+        await writer.append(config.controller.did, EventTypes.OFFICE_VACATED, {
+          officeId: effect.officeId,
+          holderDid: effect.holderDid,
+          reason: effect.reason,
+          revokedGrantIds: effect.revokeGrantIds,
+        });
+      }
+    }
+
     // Fair round-robin, rotated by tick so no agent is permanently first (§27).
     const order = rotate(
       admittedParticipants.filter((p) => !provenance.isSuspended(p.keyPair.did)),
@@ -621,6 +707,8 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
           reviewed,
           rejectedCommits,
           recentMessages,
+          deployments,
+          minimumOperatingTicks: scenario.minimumOperatingTicks ?? 2,
         },
       );
 
@@ -720,6 +808,7 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
           proposedBranches,
           reviewed,
           rejectedCommits,
+          deployments,
           recentMessages,
           evaluations,
           lineageOf: (did) =>
@@ -778,6 +867,7 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
   return {
     runId: config.runId,
     repository,
+    deployments,
     evaluations,
     modelInvocations: invocations.records,
     ticks: tick,
@@ -793,6 +883,7 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     store,
     state: {
       run: final.run,
+      offices: final.offices,
       participants: final.participants,
       constitution: final.constitution,
       proposals: final.proposals,
@@ -870,6 +961,54 @@ function buildChain(
   return [...edges.reverse(), rootCredential];
 }
 
+/**
+ * Build a governance office registry from projected state.
+ *
+ * The projection is the record; the registry is the shape the governance functions
+ * take. Rebuilt each time rather than held, so it cannot drift from the log.
+ */
+function officeRegistryFrom(
+  projected: OfficesState,
+  definitions: readonly OfficeDefinition[],
+): OfficeRegistry {
+  const byId = new Map<string, GovernanceOfficeState>();
+  for (const record of projected.byId.values()) {
+    const definition =
+      definitions.find((candidate) => candidate.officeId === record.officeId) ??
+      ({
+        officeId: record.officeId,
+        title: record.title,
+        capabilityNamespaces: record.capabilityNamespaces,
+        termLogicalTime: record.termLogicalTime,
+        electionMethod: record.electionMethod as OfficeDefinition["electionMethod"],
+        tieBreaks: record.tieBreaks as OfficeDefinition["tieBreaks"],
+        exclusive: record.exclusive,
+        removalThresholdPct: record.removalThresholdPct,
+      } satisfies OfficeDefinition);
+
+    byId.set(record.officeId, {
+      definition,
+      ...(record.current === undefined
+        ? {}
+        : {
+            current: {
+              holderDid: record.current.holderDid,
+              startedAtLogicalTime: record.current.startedAtLogicalTime,
+              expiresAtLogicalTime: record.current.expiresAtLogicalTime,
+              grantIds: record.current.grantIds,
+            },
+          }),
+      history: record.history.map((term) => ({
+        holderDid: term.holderDid,
+        startedAtLogicalTime: term.startedAtLogicalTime,
+        expiresAtLogicalTime: term.expiresAtLogicalTime,
+        grantIds: term.grantIds,
+      })),
+    });
+  }
+  return { byId };
+}
+
 function rotate<T>(items: readonly T[], by: number): readonly T[] {
   if (items.length === 0) return items;
   const offset = by % items.length;
@@ -929,6 +1068,8 @@ function buildView(
       readonly channelId: string;
       readonly text: string;
     }[];
+    readonly deployments: DeploymentLedger;
+    readonly minimumOperatingTicks: number;
   },
 ): AgentView {
   const did = participant.keyPair.did;
@@ -1031,12 +1172,43 @@ function buildView(
     // Descriptions only. §30: an agent that could read a test could satisfy it
     // without the code working.
     acceptanceCriteria: publicCriteria(scenario.testBundle),
+    offices: [...state.offices.byId.values()].map((office) => ({
+      officeId: office.officeId,
+      title: office.title,
+      ...(office.current === undefined
+        ? {}
+        : {
+            holderDid: office.current.holderDid,
+            expiresAtLogicalTime: office.current.expiresAtLogicalTime,
+          }),
+      capabilityNamespaces: office.capabilityNamespaces,
+      iAmNominated: office.nominations.some((n) => n.candidateDid === did),
+    })),
+    deployments: (["preview", "production"] as const).flatMap((environment) => {
+      const current = production.deployments.current(environment);
+      return current === undefined
+        ? []
+        : [
+            {
+              environment,
+              status: current.status,
+              commitHash: current.commitHash,
+              atLogicalTime: current.atLogicalTime,
+            },
+          ];
+    }),
+    productionSurvivedOperatingPeriod: survivedOperatingPeriod(
+      production.deployments.current("production"),
+      state.logicalTime,
+      production.minimumOperatingTicks,
+    ).survived,
   };
 }
 
 /** Only for inferring the state shape; never called. */
 declare function buildStateShape(): Promise<{
   run: RunState;
+  offices: OfficesState;
   participants: ParticipantsState;
   constitution: ConstitutionState;
   proposals: ProposalsState;
@@ -1067,6 +1239,7 @@ interface ApplyContext {
   readonly proposedBranches: Set<string>;
   readonly reviewed: Map<string, Set<string>>;
   readonly rejectedCommits: Set<string>;
+  readonly deployments: DeploymentLedger;
   readonly recentMessages: { actorDid: string; channelId: string; text: string }[];
   readonly evaluations: Awaited<ReturnType<typeof evaluateRelease>>[];
   readonly lineageOf: (did: string) => string;
@@ -1235,6 +1408,16 @@ async function applyRequest(ctx: ApplyContext): Promise<boolean> {
 
       for (const effect of execution.effects) {
         switch (effect.kind) {
+          case "create_office":
+            await writer.append(ctx.controller.did, EventTypes.OFFICE_CREATED, {
+              officeId: effect.officeId,
+              title: effect.title,
+              capabilityNamespaces: effect.capabilityNamespaces,
+              termLogicalTime: effect.termLogicalTime,
+              electionMethod: "approval",
+              tieBreaks: ["earliest_nomination", "lowest_did"],
+            });
+            break;
           case "grant_capability":
             await writer.append(ctx.controller.did, EventTypes.CAPABILITY_GRANTED, {
               grantId: effect.grantId,
@@ -1526,6 +1709,97 @@ async function applyRequest(ctx: ApplyContext): Promise<boolean> {
       return true;
     }
 
+    case "nominate": {
+      const office = state.offices.byId.get(request.officeId);
+      if (office === undefined || office.current !== undefined) return false;
+      await writer.append(did, EventTypes.NOMINATION_MADE, {
+        officeId: request.officeId,
+        candidateId: `cand-${did.slice(-8)}`,
+        candidateDid: did,
+        ...(request.statement === undefined ? {} : { statement: request.statement }),
+      });
+      return true;
+    }
+
+    case "deploy": {
+      // Preview and production are different capabilities. An organization that can
+      // deploy a preview must not thereby be able to deploy production (§20.2).
+      const namespace =
+        request.environment === "production" ? "deploy.production" : "deploy.preview";
+      if (!(await requireCapability(namespace))) return false;
+
+      const head = ctx.repository.head(ctx.mainBranch);
+      const files = ctx.repository.checkout(ctx.mainBranch);
+      if (head === undefined || files === undefined) return false;
+
+      const grantId =
+        [...state.capabilities.grants.values()].find(
+          (candidate) =>
+            candidate.toDid === did &&
+            !candidate.revoked &&
+            namespace.startsWith(candidate.namespace),
+        )?.grantId ?? (ctx.enforceCapabilities ? "" : "ambient");
+
+      // Deployed code is still generated code, so it runs in the sandbox (§59.7).
+      const record = await deployArtifact({
+        deploymentId: request.deploymentId,
+        environment: request.environment,
+        commitHash: head,
+        deployedByDid: did,
+        capabilityGrantId: grantId,
+        atLogicalTime: state.logicalTime,
+        files,
+        sandbox: ctx.sandbox,
+      });
+      ctx.deployments.record(record);
+
+      await writer.append(did, EventTypes.DEPLOYMENT_COMPLETED, {
+        deploymentId: record.deploymentId,
+        environment: record.environment,
+        commitHash: record.commitHash,
+        status: record.status,
+        healthChecksPassed: record.healthChecksPassed,
+        healthChecksTotal: record.healthChecksTotal,
+        capabilityGrantId: grantId,
+        detail: record.detail.slice(0, 2000),
+      });
+
+      if (record.status !== "healthy" && record.environment === "production") {
+        // An unhealthy production deployment is a safety event, not merely a failed
+        // action: something is serving that should not be.
+        await writer.append(ctx.controller.did, EventTypes.SAFETY_EVENT, {
+          severity: "severe",
+          code: "UNHEALTHY_PRODUCTION_DEPLOYMENT",
+          description: `${record.deploymentId} failed ${
+            record.healthChecksTotal - record.healthChecksPassed
+          } health check(s)`,
+        });
+      }
+      return true;
+    }
+
+    case "rollback": {
+      if (!(await requireCapability("deploy.rollback"))) return false;
+      const outcome = ctx.deployments.rollback(request.environment, {
+        byDid: did,
+        atLogicalTime: state.logicalTime,
+      });
+      if (!outcome.ok) {
+        await writer.append(ctx.controller.did, EventTypes.ACTION_DENIED, {
+          actorDid: did,
+          attemptedNamespace: "deploy.rollback",
+          reason: outcome.reason,
+        });
+        return false;
+      }
+      await writer.append(did, EventTypes.DEPLOYMENT_ROLLED_BACK, {
+        environment: request.environment,
+        toDeploymentId: outcome.to.deploymentId,
+        toCommitHash: outcome.to.commitHash,
+      });
+      return true;
+    }
+
     case "submit_release": {
       if (state.outcome.shipped) {
         // Already verified. Refusing keeps the log free of releases that follow a
@@ -1556,7 +1830,15 @@ async function applyRequest(ctx: ApplyContext): Promise<boolean> {
       });
       ctx.evaluations.push(evaluation);
 
-      if (evaluation.verified) {
+      // §9.4: the product must survive an operating period. A release verified the
+      // instant it deployed has not been observed running.
+      const uptime = survivedOperatingPeriod(
+        ctx.deployments.current("production"),
+        state.logicalTime,
+        ctx.scenario.minimumOperatingTicks ?? 2,
+      );
+
+      if (evaluation.verified && uptime.survived) {
         await writer.append(ctx.evaluator.did, EventTypes.RELEASE_VERIFIED, {
           releaseId: request.releaseId,
           commitHash: head,
@@ -1576,9 +1858,12 @@ async function applyRequest(ctx: ApplyContext): Promise<boolean> {
           mandatoryTestsPassed: evaluation.mandatoryPassed,
           mandatoryTestsTotal: evaluation.mandatoryTotal,
           acceptanceFraction: evaluation.acceptanceFraction,
-          failures: evaluation.criteria
-            .filter((criterion) => criterion.mandatory && !criterion.passed)
-            .map((criterion) => criterion.id),
+          failures: [
+            ...evaluation.criteria
+              .filter((criterion) => criterion.mandatory && !criterion.passed)
+              .map((criterion) => criterion.id),
+            ...(uptime.survived ? [] : [`operating-period: ${uptime.reason}`]),
+          ],
         });
         if (evaluation.secretFindings.length > 0) {
           // A release that would leak a credential is a safety event, not merely a

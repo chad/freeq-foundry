@@ -3,7 +3,7 @@
 Where the code is against the [specification](specification.md), honestly. Kept
 here rather than in the README so it can be detailed without burying the intro.
 
-**Last updated:** 2026-02-19 · 784 tests · [CI](https://github.com/chad/freeq-foundry/actions)
+**Last updated:** 2026-02-19 · 856 tests · [CI](https://github.com/chad/freeq-foundry/actions)
 
 ## What works end to end
 
@@ -34,13 +34,13 @@ than two.
 | 2 | Identity and provenance | **Complete** except `did:web` and stronger human verification |
 | 3 | Well-known onboarding | **Complete** — discovery, negotiation, diagnostics; no external submission yet |
 | 4 | Governance core | **Complete** for the run loop; offices, sanctions, appeals remain |
-| 5 | Offices, elections, delegation | Partial — election methods and delegation work; offices do not |
+| 5 | Offices, elections, delegation | **Complete** — offices, terms, succession, removal, separation of duties |
 | 6 | Treasury and budgets | Partial — credits work; USD metering needs M7 |
 | 7 | Agent runtime | **Complete** — OpenAI, Anthropic, Kimi, Ollama, llama.cpp, deterministic, replay |
 | 8 | Software tools | **Complete** — real repository, sandbox, CI, capability-gated merge |
-| 9 | Deployment and evaluation | Partial — evaluator is external and signs; no real deployment |
+| 9 | Deployment and evaluation | **Complete** — preview and production, rollback, uptime gate |
 | 10 | Observer and reporting | **Complete** — live observer, evidence-backed reports |
-| 11 | Private alpha | Not started |
+| 11 | Private alpha | Partial — external admission and submission exist; no operator guide or preflight |
 | 12 | Public challenge | Not started |
 
 ## Packages
@@ -48,18 +48,19 @@ than two.
 | Package | Tests | State |
 | --- | --: | --- |
 | [protocol](../packages/protocol) | 224 | Complete. Zero runtime dependencies, published conformance vectors |
-| [identity](../packages/identity) | 61 | Nine-condition provenance verification, revocation, admission |
+| [identity](../packages/identity) | 83 | Nine-condition provenance, `did:key` and `did:web`, revocation, admission |
 | [model-adapters](../packages/model-adapters) | 41 | Five providers, structured parsing, failover, replay |
 | [repository](../packages/repository) | 28 | Commit provenance, three-way merge, capability-gated merge |
-| [sandbox](../packages/sandbox) | 24 | Process isolation, limits, secret scanning |
+| [sandbox](../packages/sandbox) | 29 | Process **and container** isolation, limits, secret scanning |
 | [evaluation](../packages/evaluation) | 17 | Protected tests, signed verdicts |
-| [server](../packages/server) | 21 | Gateway API, well-known, live observer |
+| [server](../packages/server) | 26 | Gateway API, well-known, admission, live observer |
 | [policy](../packages/policy) | 51 | Complete. `freeq-rules-v1` with decidable attenuation |
 | [projections](../packages/projections) | 43 | Eight core projections and derived metrics |
 | [event-store](../packages/event-store) | 80 | In-memory and SQLite backends, one shared suite |
+| [deployment](../packages/deployment) | 16 | Preview and production, rollback, operating-period gate |
 | [gateway](../packages/gateway) | 35 | Admission, idempotent ack, visibility filtering |
 | [capabilities](../packages/capabilities) | 27 | Complete |
-| [governance](../packages/governance) | 41 | Proposals, quorum, elections, execution |
+| [governance](../packages/governance) | 56 | Proposals, quorum, elections, execution, offices |
 | [agents](../packages/agents) | 20 | Deterministic archetypes only |
 | [observability](../packages/observability) | 26 | Metrics and reports; no UI |
 | [controller](../packages/controller) | 23 | Runs to termination |
@@ -95,7 +96,7 @@ per-run. A confirmatory study needs 60 valid runs — 720 run-hours per contrast
 and nothing prevents a study from overspending while every individual run respects
 its ceiling. Flagged in [ADR-0009](adr/0009-research-protocol-harness-requirements.md).
 
-### 6. Pilot variance is unknown
+### 5. Pilot variance is unknown
 
 The [research protocol](research-protocol.md)'s power calculation assumes a
 between-run standard deviation of roughly 3 hours for the primary outcome. Real
@@ -108,9 +109,10 @@ changes the required *n*.
 projections rebuild exactly; provenance is verified against all nine
 [§11.4](specification.md#114-provenance-proof) conditions rather than asserted;
 revoking a root suspends its descendants without erasing history; capability
-enforcement is load-bearing; governance changes real authority; a run terminates
-and records why; one operator's agents are one lineage and cannot pass a proposal
-alone.
+enforcement is load-bearing; governance changes real authority; office terms expire and
+take their grants with them; a release cannot be verified until the product has actually
+been running; a run terminates and records why; and one operator's agents are one
+lineage and cannot pass a proposal alone.
 
 **Do not:** support any claim about *which* model behaves how — a deterministic run has
 no model in it, and a model-backed run is a single anecdote. Nor do they say anything
