@@ -8,6 +8,7 @@
  * Spec: §33.1, §33.2, §33.3, §33.7, §56.
  */
 import type { Digest } from "./hash.js";
+import type { ModelSnapshotPin } from "./research.js";
 
 /** Spec §8.5–§8.10. */
 export type ParticipantType =
@@ -164,11 +165,15 @@ export interface ToolExecutionRecord {
 }
 
 /**
- * Spec §56.4.
+ * Spec §56.4, extended by ADR-0009.
  *
  * `costUsd` is a decimal string, not a number: ADR-0004 forbids floats in
  * canonical payloads, and money is exactly the case where binary floating point
  * is wrong anyway.
+ *
+ * `snapshot` carries the pinning fields the research protocol requires. It is
+ * what makes any claim about model behaviour defensible, and it is written once
+ * per invocation where the cost is negligible against the call itself.
  */
 export interface ModelInvocationRecord {
   readonly id: string;
@@ -187,6 +192,8 @@ export interface ModelInvocationRecord {
   readonly budgetAccount: string;
   readonly status: "started" | "succeeded" | "failed";
   readonly failoverFrom?: string;
+  /** Pinned snapshot and verification level (ADR-0009). */
+  readonly snapshot?: ModelSnapshotPin;
 }
 
 /** Spec §56.5. */

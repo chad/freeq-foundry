@@ -43,6 +43,20 @@ It uses conventional normative language: **MUST**, **MUST NOT**, **SHOULD**,
 - [§52 Prototype Acceptance Criteria](specification.md#52-prototype-acceptance-criteria) — what "prototype" means
 - [Appendix E Definition of Done](specification.md#appendix-e-definition-of-done) — what "v1" means
 
+## Research protocol
+
+**[research-protocol.md](research-protocol.md)** — normative for any Freeq
+Foundry result presented as evidence. Closes
+[§58.13](specification.md#5813-research-rigor).
+
+The run is the unit of analysis, not the agent. The primary outcome is restricted
+mean time to evaluator-verified release through a 12-hour horizon. Thirty valid
+runs per arm, sixty total, as thirty contemporaneous matched blocks. One primary
+endpoint, six gatekept secondaries, everything else exploratory.
+
+Runs that do not conform may still be published — labelled **pilot**, not
+evidence.
+
 ## Decisions
 
 - **[adr/](adr/)** — Architecture Decision Records. Normative about *how* this

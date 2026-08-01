@@ -96,6 +96,8 @@ is authoritative; all queryable state is a projection of it. ([§32](docs/specif
   specification (59 sections). Start here.
 - **[docs/README.md](docs/README.md)** — section map and reading guide.
 - **[docs/adr/](docs/adr/)** — architecture decision records.
+- **[docs/research-protocol.md](docs/research-protocol.md)** — the pre-registered
+  research protocol. Normative for anything presented as evidence.
 - **[docs/open-questions.md](docs/open-questions.md)** — disposition of the
   fifteen [§58](docs/specification.md#58-open-questions) open questions.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — development setup and the rules that

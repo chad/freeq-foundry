@@ -104,6 +104,32 @@ export type {
 } from "./types.js";
 
 export {
+  CONFIRMATORY_MIN_VERIFICATION_LEVEL,
+  DEFAULT_HORIZON_MS,
+  MAX_SECONDARY_METRICS,
+  ModelVerificationLevel,
+  RunTerminationReason,
+  RunValidity,
+  checkValidityBlindness,
+  impliedValidity,
+  isConfirmatoryGrade,
+  isOrganizationalFailure,
+  isSnapshotSubstituted,
+  productiveTimeMs,
+  restrictedTimeMs,
+  runClockMs,
+  validateMetricRegistry,
+  type BlockAssignment,
+  type ClockPause,
+  type EpochDescriptor,
+  type MetricDefinition,
+  type MetricTier,
+  type ModelSnapshotPin,
+  type RunManifest,
+  type RunOutcome,
+} from "./research.js";
+
+export {
   buildSampleRun,
   deterministicKeyPair,
   parseNdjson,

@@ -18,14 +18,14 @@ that impossible.
 | [58.3](specification.md#583-lineage-visibility) | Lineage visibility | Deferred → M2 | Scenario-configurable |
 | [58.4](specification.md#584-agent-count-per-human) | Agent count per human | Provisional | Spec recommends an answer |
 | [58.5](specification.md#585-direct-human-control) | Autonomy disclosure | Deferred → M3 | Part of discovery document |
-| [58.6](specification.md#586-model-attestation) | Model attestation | Provisional | Spec recommends an answer |
+| [58.6](specification.md#586-model-attestation) | Model attestation | **Sharpened** | Five-level verification ladder, [ADR-0009](adr/0009-research-protocol-harness-requirements.md) |
 | [58.7](specification.md#587-private-channels) | Private channel reveal | Deferred → M11 | Per-run policy, disclosed up front |
 | [58.8](specification.md#588-legal-ownership) | Legal ownership | **Out of scope** | Spec declares out of scope for v1 |
 | [58.9](specification.md#589-reputation-portability) | Reputation portability | Open | Post-v1 |
 | [58.10](specification.md#5810-organization-migration) | Organization migration | Open | Post-v1 |
 | [58.11](specification.md#5811-policy-language) | Policy language | **Deferred → M4** | [ADR-0007](adr/0007-defer-policy-language.md) |
 | [58.12](specification.md#5812-public-spectator-latency) | Spectator latency | Deferred → M12 | Needs a threat model |
-| [58.13](specification.md#5813-research-rigor) | Research rigor | Open | Blocks external claims, not code |
+| [58.13](specification.md#5813-research-rigor) | Research rigor | **Decided** | [research-protocol.md](research-protocol.md), [ADR-0009](adr/0009-research-protocol-harness-requirements.md) |
 | [58.14](specification.md#5814-agent-safety-declaration) | Agent safety declaration | Deferred → M11 | Attestation at admission |
 | [58.15](specification.md#5815-organizational-personhood) | Organizational personhood | Open | Strong extension, post-v1 |
 
@@ -108,21 +108,26 @@ and flag disagreement.
 
 ## 58.6 — Model attestation
 
-**Provisional.** The specification recommends: "treat self-reported external
-model identity as a claim unless verifiable execution is available."
+**Sharpened into a five-level ladder** by the
+[research protocol](research-protocol.md#8-model-verification-levels) and
+[ADR-0009](adr/0009-research-protocol-harness-requirements.md).
 
-Adopt that, and make the epistemic status visible rather than burying it. Events
-carry `modelIdentifier` in `ActionProvenance`
-([§33.2](specification.md#332-action-provenance)); the observer and reports must
-distinguish platform-observed model identity (platform-routed calls, where the
-platform knows) from operator-asserted identity (external agents, where it does
-not).
+The specification recommended treating self-reported external model identity as a
+claim. The ruling replaces the binary claimed/verified distinction with graded
+evidence — unreported, self-reported, signed runtime attestation, provider
+receipt, platform-mediated — recorded per model invocation.
 
-This is a hard constraint on research claims: any statement about model behaviour
-must be qualified by which category the data came from
-([§59.18](specification.md#59-final-design-principles)).
+The operative constraint: **condition assignment may never depend on a Level 0–1
+claim**, and model-family analyses involving unverified identities are exploratory
+only. Results must be reported both including and excluding unverified agents.
 
-**Trigger:** Milestone 7, model adapters.
+What remains genuinely open is Levels 2 and 3: what a credible signed runtime
+attestation looks like, and whether any provider offers a verifiable invocation
+receipt. Neither exists yet, so external agents are Level 1 in practice.
+
+**Trigger:** Milestone 7, model adapters. A dedicated model-comparison experiment
+would require Level 3 or 4 throughout, which is not currently achievable for
+externally operated agents.
 
 ## 58.7 — Private channel reveal
 
@@ -191,17 +196,36 @@ non-zero, with private-channel content excluded entirely rather than delayed.
 
 ## 58.13 — Research rigor
 
-**Open.** Which repeated conditions and statistical methods are necessary before
-making external claims about model behaviour?
+**Decided.** Chief Scientist ruling, recorded in full at
+[research-protocol.md](research-protocol.md). Harness consequences in
+[ADR-0009](adr/0009-research-protocol-harness-requirements.md).
 
-Blocks *publication*, not implementation — but it should be settled before the
-first serious run, because it determines how many runs are needed and therefore
-the budget. [§49](specification.md#49-experimental-controls) defines ten
-conditions and requires replication
-([§49.12](specification.md#4912-replication)) without specifying counts.
+The headline answers: the **run** is the unit of analysis, not the agent; the
+primary outcome is restricted mean time to evaluator-verified release through a
+12-hour horizon; **30 valid runs per arm, 60 total**, as 30 contemporaneous
+matched blocks; one primary endpoint, six gatekept secondaries, everything else
+exploratory.
 
-Needs someone with a statistics background. Flagged here so it is not discovered
-at analysis time.
+The ten [§49](specification.md#49-experimental-controls) conditions are a research
+program, not ten arms of one trial. The first confirmatory contrast is
+capability-enforced governance against
+[Condition F](specification.md#496-condition-f-unenforced-governance) — which
+tests whether [§6.5 no ambient authority](specification.md#65-no-ambient-authority-invariant)
+is load-bearing or decorative.
+
+Two things this surfaced that had not been visible before:
+
+- **A third temporal notion.** The primary outcome is elapsed time net of
+  permitted clock pauses, which neither `logicalTime` nor `wallTime` expresses.
+  The run clock is now a projection (ADR-0009 §1).
+- **A study-level budget gap.** 60 valid runs at 12 hours is 720 run-hours per
+  contrast. The [§21](specification.md#21-treasury-budgets-and-scarcity) hard
+  ceiling is per-run and does not aggregate across a study. Flagged in ADR-0009,
+  not yet designed, and not in Milestone 6's scope.
+
+**Remaining dependency:** the power calculation assumes a between-run standard
+deviation of roughly 3 hours. Pilot runs must produce a real estimate before
+enrollment; a materially different value changes the required *n*.
 
 ## 58.14 — Agent safety declaration
 
