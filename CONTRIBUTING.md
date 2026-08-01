@@ -101,3 +101,13 @@ during implementation. Each has a status and a trigger.
 If you hit a question the specification does not answer, add it there rather than
 answering it implicitly in code. A question without a trigger is not deferred —
 it is forgotten.
+
+## Dependency policy
+
+`packages/protocol` has **zero** runtime dependencies and must keep it that way.
+
+Development dependencies are pinned transitively via `pnpm.overrides` in the
+root `package.json` where an advisory requires it. `pnpm audit` must be clean
+before merging. A test-runner vulnerability is not a production vulnerability,
+but a repository that has learned to ignore its own alerts will ignore the one
+that matters.
