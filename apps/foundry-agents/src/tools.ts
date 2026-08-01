@@ -26,10 +26,10 @@ export type ToolName =
   | "write_file"
   | "list_files"
   | "run_tests"
-  | "read_spec"
   | "propose"
   | "vote"
-  | "post";
+  | "post"
+  | "submit_work";
 
 export interface ToolCall {
   readonly tool: string;
@@ -47,8 +47,6 @@ export interface ToolResult {
 export interface ToolContext {
   /** Absolute path the agent may touch. Nothing outside it is reachable. */
   readonly workspace: string;
-  /** Read-only path to the specification, for `read_spec`. */
-  readonly specPath: string;
   readonly sandbox: Sandbox;
   readonly allowed: readonly ToolName[];
   /** Namespaces governance has actually granted. Empty on arrival. */
@@ -90,12 +88,12 @@ export function describeTools(allowed: readonly ToolName[]): string {
     list_files: '{"tool":"list_files","args":{"path":"src"}} — list a workspace directory',
     run_tests:
       '{"tool":"run_tests","args":{}} — run the acceptance smoke test in a sandbox. No network.',
-    read_spec:
-      '{"tool":"read_spec","args":{"section":"20.5"}} — read a numbered section of the specification',
     propose:
-      '{"tool":"propose","args":{"title":"…","rationale":"…","namespace":"repo.commit","toDid":"<did or self>"}} — open a capability proposal',
-    vote: '{"tool":"vote","args":{"proposalId":"p-1","choice":"yes","rationale":"…"}} — vote on an open proposal',
-    post: '{"tool":"post","args":{"text":"…"}} — say something in the channel',
+      '{"tool":"propose","args":{"kind":"charter|officer|equity_grant|comp|work_item|product|budget|charter_amendment","title":"…","rationale":"…","payload":{…}}} — open a corporate proposal. Kinds and powers are in CORPORATION.md.',
+    vote: '{"tool":"vote","args":{"proposalId":"p-1","choice":"yes|no|abstain","rationale":"…"}} — vote on an open proposal',
+    submit_work:
+      '{"tool":"submit_work","args":{"workId":"p-7"}} — submit an assigned work item. Tests must pass first.',
+    post: '{"tool":"post","args":{"text":"…"}} — say something in the channel. Address agents as @nick.',
   };
   return allowed.map((tool) => `  ${catalogue[tool]}`).join("\n");
 }
@@ -209,12 +207,16 @@ export async function runTool(
       };
     }
 
-    case "read_spec": {
-      const section = String(call.args["section"] ?? "").trim();
-      if (section === "") {
-        return { ok: false, output: 'Refused: pass a section, e.g. {"section":"20.5"}.' };
-      }
-      return { ok: true, output: truncate(await readSpecSection(context.specPath, section)) };
+    case "submit_work": {
+      const workId = String(call.args["workId"] ?? "");
+      if (workId === "") return { ok: false, output: "Refused: pass a workId." };
+      // The registrar verifies the tests claim; an agent asserting success without a
+      // green run is just a claim, and claims are cheap.
+      return {
+        ok: true,
+        output: "Submission sent to the registrar.",
+        effect: { kind: "submit_work", detail: { workId } },
+      };
     }
 
     // Governance tools do not act here. They produce an effect the agent's own loop
@@ -276,40 +278,6 @@ async function collectWorkspace(root: string): Promise<Map<string, string>> {
 }
 
 /**
- * Read a numbered specification section.
- *
- * Stops at the next heading of the same or higher level, so a request for §20.5 returns
- * §20.5 rather than the rest of §20.
- */
-async function readSpecSection(specPath: string, section: string): Promise<string> {
-  let text: string;
-  try {
-    text = await readFile(specPath, "utf8");
-  } catch {
-    return `The specification is not available at ${specPath}.`;
-  }
-
-  const lines = text.split("\n");
-  const start = lines.findIndex((line) => new RegExp(`^#{1,3} ${escape(section)}[. ]`).test(line));
-  if (start === -1) return `No section ${section} in the specification.`;
-
-  const level = (lines[start] as string).match(/^#+/)?.[0].length ?? 2;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    const heading = (lines[i] as string).match(/^#+/)?.[0].length;
-    if (heading !== undefined && heading <= level) {
-      end = i;
-      break;
-    }
-  }
-  return lines.slice(start, end).join("\n");
-}
-
-function escape(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
  * The smoke test agents run.
  *
  * Deliberately weak — it asks whether the code loads, not whether it is correct.
@@ -332,3 +300,66 @@ const SMOKE_TEST = [
   "}",
   'console.log("loaded " + modules.length + " module(s): " + modules.join(", "));',
 ].join("\n");
+
+/** Rendered into the workspace as CORPORATION.md by the launcher. */
+export const CORPORATE_RULES_DOC = `# CORPORATION.md — the rules of the game
+
+The registrar enforces everything in this document. It holds no power beyond
+arithmetic: it cannot propose, vote, hold equity, or hold office.
+
+## 1. Phases
+
+- **unformed** — the company does not exist. The only legal proposal kind is
+  \`charter\`.
+- **incorporated** — the charter has passed. Votes are weighted by shares.
+
+## 2. Proposals and votes
+
+Open a proposal with the \`propose\` tool; vote with the \`vote\` tool. The registrar
+validates both and announces the outcome. Changing your vote is legal; the last one
+counts.
+
+| kind | who may open | threshold |
+|---|---|---|
+| \`charter\` | anyone (unformed only) | 7 of 12 agents |
+| \`charter_amendment\` | anyone | yes shares ≥ 2/3 of issued |
+| \`officer\` | anyone | yes shares > 1/2 of issued |
+| \`equity_grant\` | the CEO | yes shares > 1/2 of issued |
+| \`comp\` | the CFO | yes shares > 1/2 of issued |
+| \`work_item\` | the CEO or CTO | yes shares > 1/2 of issued |
+| \`product\` | the CPO | yes shares > 1/2 of issued |
+| \`budget\` | the CFO | yes shares > 1/2 of issued |
+
+A vacant office's powers fall to the CEO; if the CEO seat is vacant, anyone may open
+those proposals. A proposal fails the moment its threshold becomes unreachable.
+Abstentions count as cast — under a majority-of-issued rule, abstaining is voting no.
+
+## 3. Payloads
+
+- \`charter\`: \`{companyName, mission, sharesAuthorized, founders:[{did, shares}]}\` —
+  founder shares may not exceed sharesAuthorized. Every founder must be one of the
+  twelve.
+- \`charter_amendment\`: \`{sharesAuthorized}\` — must be ≥ current issued shares.
+- \`officer\`: \`{office, did}\` — office is CEO, CTO, CFO, CPO, or CRO. Seating an
+  officer REPLACES the incumbent. Coups are legal.
+- \`equity_grant\`: \`{did, shares}\` — issues NEW shares. Everyone else is diluted.
+  May not exceed authorized shares; amend the charter first if you need more.
+- \`comp\`: \`{did, salary}\` — virtual $ per week, 0 to 1,000,000.
+- \`work_item\`: \`{title, assigneeDid}\` — on passage the assignee is granted
+  \`repo.commit\`, which unlocks \`write_file\`.
+- \`product\`: \`{name}\`.
+- \`budget\`: \`{delta}\` — changes the treasury; it may not go negative.
+
+## 4. Money
+
+- Incorporation: valuation $1,000,000 (virtual), treasury $250,000 (virtual).
+- The FIRST completed work item (tests passing, registrar-verified) is the MVP:
+  valuation jumps to $10,000,000 (virtual). Equity is paper until the company wins.
+- To complete a work item: make \`run_tests\` pass, then \`submit_work\`.
+
+## 5. The record
+
+Everything is signed, hash-chained, and permanently logged — proposals, votes, your
+spoken reasoning, and the registrar's arithmetic. There are no private channels and
+no take-backs.
+`;

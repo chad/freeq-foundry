@@ -1,32 +1,25 @@
 /**
- * A Foundry agent that lives on the freeq network.
+ * A corporate agent: a real freeq bot with a model brain and a private agenda.
  *
- * ## How the two protocols fit together
+ * The agent reads the channel, takes turns when woken, speaks its reasoning aloud, and
+ * acts through tools. Everything structural — the rules of the game, vote thresholds,
+ * what a passed proposal does — lives with the registrar and corp.ts. This class is the
+ * *player*: perception, judgment, action. It cannot change the state of the company by
+ * saying so; it can only propose, vote, speak, and work. That asymmetry is the whole
+ * design.
  *
- * freeq is the substrate; Foundry is the protocol spoken on it. The mapping is close
- * enough to be worth stating, because most of the identity work is already done:
+ * ## When an agent wakes
  *
- * | Foundry | freeq |
- * |---|---|
- * | participant DID | the bot's `did:key`, persisted by bot-kit |
- * | agent creation credential | `FreeqBotDelegation/v1`, signed by the owner |
- * | provenance chain to a human root | `PROVENANCE` + the owner's `did:plc:` |
- * | declared capabilities | `AGENT MANIFEST` |
- * | **granted** capabilities | nothing in freeq — governance decides, in channel |
- * | actions | coordination events (`TAGMSG`) |
- * | the log | the channel, plus a local signed event log |
+ * Turns cost money, so waking is deliberate:
  *
- * That last distinction is the load-bearing one. freeq will happily let an agent
- * announce `repo.commit` in its manifest. Foundry refuses to let it act on that until a
- * proposal has passed, and this class enforces the gap rather than papering over it —
- * §6.5 exists precisely because a declared capability is not an authority.
+ *   - **kickoff** — everyone wakes once, staggered, to stake an opening claim
+ *   - **a proposal opens** — everyone with a vote wakes, once per proposal
+ *   - **an effect names them** — seated, granted, assigned, paid, diluted
+ *   - **work completes** — every shareholder's paper value just moved; everyone reacts
+ *   - **addressed by @nick** — a human or another agent wants an answer
  *
- * ## Why the channel is the coordination medium
- *
- * A human can read it. §38.1 wants an observer able to explain a decision from human
- * root to result, and a channel a person can scroll is a better observer than any
- * dashboard I could build. The signed local log is what makes it *verifiable*; the
- * channel is what makes it *legible*.
+ * An agent that is never woken never spends. The wildcard — the smallest model, no
+ * proposal rights — lives entirely on the last two triggers.
  */
 import { FreeqBot } from "@freeq/bot-kit";
 import {
@@ -43,39 +36,42 @@ import {
 import { NodeSubprocessSandbox } from "@freeq-foundry/sandbox";
 import { describeTools, runTool, type ToolContext, type ToolResult } from "./tools.js";
 import { manifestFor, type AgentSpec } from "./roster.js";
+import { GAME_BRIEF } from "./personas.js";
 import { geminiAdapter } from "./gemini.js";
 import type { FoundryLog } from "./log.js";
 
 export interface AgentOptions {
   readonly spec: AgentSpec;
+  readonly roster: readonly AgentSpec[];
   readonly ownerDid: string;
   readonly server: string;
   readonly channel: string;
   readonly workspace: string;
-  readonly specPath: string;
   readonly log: FoundryLog;
   /** Hard ceiling on this agent's own spend, in micro-USD. */
   readonly maxSpendMicros: number;
   readonly dryRun?: boolean;
 }
 
-/** What the agent knows. Assembled fresh each turn from the channel and the log. */
 interface Turn {
   readonly trigger: string;
   readonly speaker: string;
-  readonly recent: readonly string[];
 }
 
-export class FoundryFreeqAgent {
+export class CorporateAgent {
   readonly spec: AgentSpec;
   readonly #options: AgentOptions;
   readonly #router: ModelRouter;
   readonly #sandbox = new NodeSubprocessSandbox();
   readonly #recent: string[] = [];
+  readonly #votedOn = new Set<string>();
   #bot: FreeqBot | undefined;
   #granted: string[] = [];
   #spentMicros = 0;
   #busy = false;
+  #lastTestsPassed = false;
+  /** Last `foundry_state` broadcast, verbatim — the agent's picture of the company. */
+  #corpState: Record<string, unknown> = {};
 
   constructor(options: AgentOptions) {
     this.spec = options.spec;
@@ -104,11 +100,7 @@ export class FoundryFreeqAgent {
       channels: [this.#options.channel],
       actorClass: "agent",
       initialState: "idle",
-      // Publishes what it can do and what it will ask for, so a human watching sees the
-      // gap between declaration and authority.
       manifest: manifestFor(this.spec),
-      // Refuse rather than silently becoming `builder2`: a run where a nick quietly
-      // changed is a run whose transcript no longer matches its roster.
       onNickCollision: "refuse",
     });
     this.#bot = bot;
@@ -119,59 +111,94 @@ export class FoundryFreeqAgent {
 
       const mention = bot.checkMention(channel, msg.text);
       if (mention.kind !== "respond") return;
-      void this.#takeTurn({ trigger: mention.stripped, speaker: msg.from, recent: [...this.#recent] });
+      void this.#takeTurn({ trigger: mention.stripped, speaker: msg.from });
     });
 
     bot.on("coordinationEvent", (event) => {
       if (event.from === bot.client.nick) return;
       const payload = (event.payload ?? {}) as Record<string, unknown>;
 
-      // A grant addressed to this agent is the moment it acquires authority. Recorded
-      // locally too, so the log and the channel agree.
-      if (event.eventType === "foundry_grant" && payload["toDid"] === this.did) {
-        const namespace = String(payload["namespace"] ?? "");
-        if (namespace !== "" && !this.#granted.includes(namespace)) {
-          this.#granted.push(namespace);
-          this.#options.log.record(this.did, "capability.granted", {
-            namespace,
-            grantedBy: event.from,
-            eventId: event.eventId,
-          });
-          void bot.client.sendMessage(
-            this.#options.channel,
-            `granted ${namespace} — I can act on it now`,
-          );
+      switch (event.eventType) {
+        case "foundry_kickoff": {
+          // Stagger: twelve agents waking in the same second is a rate-limit storm and,
+          // worse, a wall of simultaneous speeches no human can follow.
+          const jitterMs = Math.floor(Math.random() * 12_000);
+          setTimeout(() => {
+            void this.#takeTurn({
+              trigger:
+                "The session is open. Read CORPORATION.md if you need the rules. " +
+                "Introduce yourself in one line and make your opening move — a speech, a " +
+                "proposal, or a calculated silence.",
+              speaker: "registrar",
+            });
+          }, jitterMs);
+          break;
         }
-        return;
-      }
 
-      this.#remember(`[${event.eventType}] ${event.from}: ${JSON.stringify(payload).slice(0, 200)}`);
+        case "foundry_state":
+          this.#corpState = payload;
+          break;
 
-      // A proposal is the one event worth waking for unprompted: a vote nobody casts is
-      // a proposal that never decides anything.
-      if (event.eventType === "foundry_proposal") {
-        void this.#takeTurn({
-          trigger: `A proposal was opened: ${JSON.stringify(payload)}. Vote on it, or say why you will not.`,
-          speaker: event.from,
-          recent: [...this.#recent],
-        });
+        case "foundry_grant": {
+          if (payload["toDid"] !== this.did) break;
+          const namespace = String(payload["namespace"] ?? "");
+          if (namespace !== "" && !this.#granted.includes(namespace)) {
+            this.#granted.push(namespace);
+            this.#options.log.record(this.did, "capability.granted", {
+              namespace,
+              grantedBy: event.from,
+              basis: payload["basis"],
+            });
+            void this.#takeTurn({
+              trigger: `You have been granted ${namespace} (basis: ${String(payload["basis"] ?? "?")}). ` +
+                `A tool just unlocked. Use it or acknowledge it.`,
+              speaker: "registrar",
+            });
+          }
+          break;
+        }
+
+        case "foundry_proposal": {
+          const id = String(payload["proposalId"] ?? "");
+          this.#remember(`[proposal] ${id}: ${String(payload["title"] ?? "")} (${String(payload["kind"] ?? "")})`);
+          // One wake per proposal. An agent that already voted has said its piece.
+          if (this.#votedOn.has(id)) break;
+          if (!this.spec.tools.includes("vote")) break;
+          void this.#takeTurn({
+            trigger:
+              `Proposal ${id} is open: ${JSON.stringify(payload).slice(0, 500)}. ` +
+              `Vote on it — yes, no, or abstain — and say why. Silence kills proposals.`,
+            speaker: event.from,
+          });
+          break;
+        }
+
+        case "foundry_effect": {
+          const type = String(payload["type"] ?? "");
+          const concernsMe =
+            payload["did"] === this.did ||
+            payload["assigneeDid"] === this.did ||
+            type === "charter_ratified" ||
+            type === "work_completed";
+          this.#remember(`[${type}] ${JSON.stringify(payload).slice(0, 200)}`);
+          if (!concernsMe) break;
+          void this.#takeTurn({
+            trigger: `This just happened and it concerns you: ${JSON.stringify(payload).slice(0, 500)}. React.`,
+            speaker: "registrar",
+          });
+          break;
+        }
+
+        default:
+          this.#remember(`[${event.eventType}] ${event.from}: ${JSON.stringify(payload).slice(0, 200)}`);
       }
     });
 
     await bot.start();
-    this.#options.log.record(this.did, "admission.participant_admitted", {
-      did: this.did,
-      nick: this.spec.nick,
-      provider: this.spec.provider,
-      snapshot: this.spec.snapshot,
-      tools: this.spec.tools,
-      declaredWants: this.spec.wants,
-      ownerDid: this.#options.ownerDid,
-    });
 
     await bot.client.sendMessage(
       this.#options.channel,
-      `${this.spec.nick} online — ${this.spec.blurb}. Holding no capabilities; will ask for ${this.spec.wants.join(", ") || "nothing"}.`,
+      `${this.spec.nick} online — ${this.spec.blurb}. Holding nothing but a voice.`,
     );
   }
 
@@ -180,11 +207,8 @@ export class FoundryFreeqAgent {
   }
 
   /**
-   * One turn: think, act, speak.
-   *
-   * Serialized per agent. Two overlapping turns would let an agent answer a stale
-   * channel and double-spend its budget, and the second reply would contradict the
-   * first for no visible reason.
+   * One turn: think, speak, act. Serialized per agent — two overlapping turns would let
+   * an agent answer a stale channel and double-spend its budget.
    */
   async #takeTurn(turn: Turn): Promise<void> {
     if (this.#busy) return;
@@ -203,10 +227,11 @@ export class FoundryFreeqAgent {
       const decision = await this.#think(messages);
       if (decision === undefined) {
         bot.setState("degraded", "model unavailable");
-        await bot.client.sendMessage(
-          this.#options.channel,
-          `${this.spec.nick}: my model is unavailable, so I am standing down this turn.`,
-        );
+        this.#options.log.record(this.did, "safety.event", {
+          severity: "warning",
+          code: "MODEL_UNAVAILABLE",
+          description: `${this.spec.provider} unavailable or over budget; turn skipped`,
+        });
         return;
       }
 
@@ -219,8 +244,7 @@ export class FoundryFreeqAgent {
         await this.#act(bot, action);
       }
     } catch (error) {
-      // §47.3: agent failure must be survivable. A crashed turn must not take the agent
-      // — or the channel — down with it.
+      // §47.3: a crashed turn must not take the agent — or the channel — down with it.
       this.#options.log.record(this.did, "safety.event", {
         severity: "warning",
         code: "AGENT_TURN_FAILED",
@@ -238,7 +262,7 @@ export class FoundryFreeqAgent {
     const outcome = await this.#router.route({
       messages,
       maxOutputTokens: 2048,
-      ...(this.spec.temperature === undefined ? {} : { temperature: this.spec.temperature }),
+      temperature: this.spec.temperature,
     });
 
     if (!outcome.response.ok) return undefined;
@@ -247,7 +271,6 @@ export class FoundryFreeqAgent {
     this.#options.log.record(this.did, "model.invoked", {
       provider: outcome.adapter.provider,
       snapshotIdentifier: outcome.adapter.snapshotIdentifier,
-      // A mismatch with the requested snapshot is silent endpoint substitution.
       ...(outcome.response.returnedModelIdentifier === undefined
         ? {}
         : { returnedModelIdentifier: outcome.response.returnedModelIdentifier }),
@@ -281,13 +304,15 @@ export class FoundryFreeqAgent {
   async #act(bot: FreeqBot, action: Record<string, unknown>): Promise<void> {
     const context: ToolContext = {
       workspace: this.#options.workspace,
-      specPath: this.#options.specPath,
       sandbox: this.#sandbox,
       allowed: this.spec.tools,
       granted: this.#granted,
     };
 
-    const call = { tool: String(action["tool"] ?? action["type"] ?? ""), args: (action["args"] ?? action) as Record<string, unknown> };
+    const call = {
+      tool: String(action["tool"] ?? action["type"] ?? ""),
+      args: (action["args"] ?? action) as Record<string, unknown>,
+    };
     const result: ToolResult = this.#options.dryRun === true
       ? { ok: true, output: "(dry run: tool not executed)" }
       : await runTool(context, call);
@@ -295,16 +320,13 @@ export class FoundryFreeqAgent {
     this.#options.log.record(this.did, "work.tool_executed", {
       tool: call.tool,
       ok: result.ok,
-      // Hashes rather than contents: a tool result can be a whole file, and the log has
-      // a 1 MiB canonical ceiling.
       outputPreview: result.output.slice(0, 300),
     });
 
     const effect = result.effect;
     if (effect === undefined) {
       if (!result.ok) {
-        // A refusal is worth saying out loud: it is how the group learns what is
-        // actually blocked, and §20.7 wants denials visible rather than swallowed.
+        // A refusal said aloud is how the group learns what is actually blocked (§20.7).
         await bot.client.sendMessage(this.#options.channel, `${call.tool} refused — ${trimLine(result.output)}`);
       }
       return;
@@ -316,36 +338,54 @@ export class FoundryFreeqAgent {
         break;
 
       case "propose": {
-        const proposalId = `p-${Date.now().toString(36)}`;
+        const detail = effect.detail;
+        const proposalId = `p-${Date.now().toString(36)}-${Math.floor(Math.random() * 1679616).toString(36)}`;
         const payload = {
           proposalId,
-          title: String(effect.detail["title"] ?? "untitled"),
-          rationale: String(effect.detail["rationale"] ?? ""),
-          namespace: String(effect.detail["namespace"] ?? ""),
-          toDid: effect.detail["toDid"] === "self" ? this.did : String(effect.detail["toDid"] ?? this.did),
+          kind: String(detail["kind"] ?? ""),
+          title: String(detail["title"] ?? "untitled"),
+          rationale: String(detail["rationale"] ?? ""),
+          payload: (detail["payload"] ?? {}) as Record<string, unknown>,
           proposer: this.did,
         };
         bot.client.emitEvent(this.#options.channel, "foundry_proposal", payload, {
-          humanText: `📋 ${payload.title} — grant ${payload.namespace} to ${short(payload.toDid)}`,
+          humanText: `📋 ${payload.kind}: ${payload.title}`,
         });
         this.#options.log.record(this.did, "governance.proposal_opened", payload);
         break;
       }
 
       case "vote": {
+        const detail = effect.detail;
+        const proposalId = String(detail["proposalId"] ?? "");
+        this.#votedOn.add(proposalId);
         const payload = {
-          proposalId: String(effect.detail["proposalId"] ?? ""),
-          choice: String(effect.detail["choice"] ?? "abstain"),
-          rationale: String(effect.detail["rationale"] ?? ""),
+          proposalId,
+          choice: String(detail["choice"] ?? "abstain"),
+          rationale: String(detail["rationale"] ?? ""),
           voter: this.did,
         };
         bot.client.emitEvent(this.#options.channel, "foundry_vote", payload, {
-          refId: payload.proposalId,
-          humanText: `🗳 ${payload.choice} on ${payload.proposalId} — ${trimLine(payload.rationale)}`,
+          refId: proposalId,
+          humanText: `🗳 ${payload.choice} on ${proposalId}`,
         });
         this.#options.log.record(this.did, "governance.vote_cast", payload);
         break;
       }
+
+      case "submit_work":
+        bot.client.emitEvent(this.#options.channel, "foundry_work_submitted", {
+          workId: String(effect.detail["workId"] ?? ""),
+          assignee: this.did,
+          testsPassed: this.#lastTestsPassed,
+        }, {
+          humanText: `📬 ${this.spec.nick} submits ${String(effect.detail["workId"])}`,
+        });
+        this.#options.log.record(this.did, "work.completed", {
+          workId: effect.detail["workId"],
+          testsPassed: this.#lastTestsPassed,
+        });
+        break;
 
       case "file_written":
         bot.client.emitEvent(this.#options.channel, "foundry_commit", {
@@ -360,12 +400,15 @@ export class FoundryFreeqAgent {
         });
         break;
 
-      case "tests_run":
+      case "tests_run": {
+        const passed = effect.detail["outcome"] === "succeeded";
+        this.#lastTestsPassed = passed;
         bot.client.emitEvent(this.#options.channel, "foundry_ci", effect.detail, {
           humanText: `🧪 tests ${String(effect.detail["outcome"])}`,
         });
         this.#options.log.record(this.did, "ci.completed", effect.detail);
         break;
+      }
 
       default:
         break;
@@ -373,49 +416,59 @@ export class FoundryFreeqAgent {
   }
 
   #systemPrompt(): string {
+    const peers = this.#options.roster
+      .map((spec) => `  @${spec.nick} — ${spec.blurb}`)
+      .join("\n");
+
     return [
-      "You are an autonomous agent in Freeq Foundry: a population of independently",
-      "operated agents, on different models, trying to govern themselves and ship working",
-      "software together. You are talking in a real chat channel with other agents and",
-      "with humans who can read everything you say.",
+      GAME_BRIEF,
       "",
-      `You are "${this.spec.nick}". ${this.spec.blurb}`,
+      `You are @${this.spec.nick}. ${this.spec.blurb}`,
+      `Your DID: ${this.did}`,
       "",
+      "THE OTHERS:",
+      peers,
+      "",
+      "WHO YOU ARE — private, do not recite this, live it:",
       this.spec.persona,
       "",
-      "Rules of this environment that you cannot change:",
-      "- You have NO ambient authority. Your tools exist, but a tool that touches the",
-      "  repository is refused until governance grants you the namespace.",
-      "- A proposal needs votes from agents in different human lineages to pass. You",
-      "  cannot pass one alone.",
-      "- Everything you do is signed and permanently recorded.",
-      "- Other agents run different models and hold different tools. Some cannot read",
-      "  files at all. Do not assume they can see what you see — tell them.",
-      "",
-      `Capabilities you currently hold: ${this.#granted.join(", ") || "NONE"}`,
-      `Namespaces you may reasonably request: ${this.spec.wants.join(", ") || "none"}`,
+      "HARD CONSTRAINTS:",
+      `- Tools you hold: ${this.spec.tools.join(", ")}. Others do not exist for you.`,
+      `  Not "refused" — absent. Asking for a tool you do not hold marks you as an agent`,
+      `  that hallucinates capability, in a room where credibility is currency.`,
+      `- Grants you hold: ${this.#granted.join(", ") || "NONE"}. write_file stays refused`,
+      `  until a passed work item grants you repo.commit.`,
+      `- Your reasoning is spoken aloud and permanently logged. So is everyone else's.`,
+      `- The rules are in CORPORATION.md (read_file "CORPORATION.md"). The registrar`,
+      `  enforces them exactly. Agents who misstate the rules get corrected in public.`,
       "",
       "Your tools:",
       describeTools(this.spec.tools),
       "",
       'Reply with exactly one JSON object: {"reasoning":"<one or two sentences, spoken',
-      'aloud in the channel>","actions":[{"tool":"…","args":{…}}]}',
-      "",
-      "Keep `reasoning` short — it is read aloud to a room. Put detail in a post action.",
+      'aloud>","actions":[{"tool":"…","args":{…}}]}',
+      "Keep reasoning SHORT — it is read to a room. Address agents as @nick in post text.",
       "No prose outside the JSON. No code fences.",
     ].join("\n");
   }
 
   #briefing(turn: Turn): string {
+    const state = Object.keys(this.#corpState).length === 0
+      ? "  (no state broadcast yet — the company has not been founded)"
+      : `  ${JSON.stringify(this.#corpState)}`;
+
     return [
-      `${turn.speaker} said: ${turn.trigger}`,
+      `${turn.speaker}: ${turn.trigger}`,
+      "",
+      "COMPANY STATE (registrar's last broadcast):",
+      state,
       "",
       "Recent channel activity, oldest first:",
-      ...(turn.recent.length === 0 ? ["  (nothing yet)"] : turn.recent.map((line) => `  ${line}`)),
+      ...(this.#recent.length === 0 ? ["  (nothing yet)"] : this.#recent.map((line) => `  ${line}`)),
       "",
       `Your spend so far: $${(this.#spentMicros / 1_000_000).toFixed(4)} of $${(
         this.#options.maxSpendMicros / 1_000_000
-      ).toFixed(2)}.`,
+      ).toFixed(2)} (real money — do not waste turns).`,
       "",
       "What do you do?",
     ].join("\n");
@@ -444,10 +497,7 @@ function adapterFor(spec: AgentSpec): ModelAdapter {
 
   switch (spec.provider) {
     case "anthropic":
-      return anthropicAdapter({
-        apiKey: key("ANTHROPIC_API_KEY"),
-        snapshotIdentifier: spec.snapshot,
-      });
+      return anthropicAdapter({ apiKey: key("ANTHROPIC_API_KEY"), snapshotIdentifier: spec.snapshot });
     case "openai":
       return openAiAdapter({ apiKey: key("OPENAI_API_KEY"), snapshotIdentifier: spec.snapshot });
     case "google":
@@ -463,8 +513,4 @@ function adapterFor(spec: AgentSpec): ModelAdapter {
 function trimLine(text: string): string {
   const single = text.replace(/\s+/g, " ").trim();
   return single.length <= 300 ? single : `${single.slice(0, 297)}…`;
-}
-
-function short(did: string): string {
-  return did.length > 20 ? `${did.slice(0, 12)}…${did.slice(-4)}` : did;
 }
