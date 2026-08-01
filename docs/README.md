@@ -43,11 +43,14 @@ It uses conventional normative language: **MUST**, **MUST NOT**, **SHOULD**,
 - [§52 Prototype Acceptance Criteria](specification.md#52-prototype-acceptance-criteria) — what "prototype" means
 - [Appendix E Definition of Done](specification.md#appendix-e-definition-of-done) — what "v1" means
 
-## Open questions
+## Decisions
 
-Section 58 lists fifteen unresolved design questions (DID method, human
-verification, lineage visibility, policy language, legal ownership, and others).
-These are live, not rhetorical. They should be resolved as ADRs and linked back.
+- **[adr/](adr/)** — Architecture Decision Records. Normative about *how* this
+  implementation works, where the specification is normative about *what* it must
+  do.
+- **[open-questions.md](open-questions.md)** — disposition of all fifteen
+  [§58](specification.md#58-open-questions) open questions: decided, deferred with
+  a named trigger, or genuinely open. Nothing in it blocks Milestone 1.
 
 ## Archive
 
