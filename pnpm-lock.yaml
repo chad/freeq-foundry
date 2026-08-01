@@ -22,8 +22,64 @@ importers:
         specifier: ^3.2.6
         version: 3.2.7(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.1)
 
+  packages/agents:
+    dependencies:
+      '@freeq-foundry/projections':
+        specifier: workspace:*
+        version: link:../projections
+      '@freeq-foundry/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.7(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.1)
+
   packages/capabilities:
     dependencies:
+      '@freeq-foundry/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@freeq-foundry/projections':
+        specifier: workspace:*
+        version: link:../projections
+      '@freeq-foundry/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.7(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.1)
+
+  packages/controller:
+    dependencies:
+      '@freeq-foundry/agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@freeq-foundry/capabilities':
+        specifier: workspace:*
+        version: link:../capabilities
+      '@freeq-foundry/event-store':
+        specifier: workspace:*
+        version: link:../event-store
+      '@freeq-foundry/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@freeq-foundry/governance':
+        specifier: workspace:*
+        version: link:../governance
       '@freeq-foundry/policy':
         specifier: workspace:*
         version: link:../policy
