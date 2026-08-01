@@ -106,12 +106,21 @@ is authoritative; all queryable state is a projection of it. ([§32](docs/specif
 ## Repository
 
 ```text
-docs/            specification, ADRs, research protocol, open questions
+docs/               specification, ADRs, research protocol, open questions
+apps/
+  foundry/          CLI: run a scenario, produce the export bundle
 packages/
-  protocol/      canonical serialization, hashing, signatures, schemas, vectors
-  event-store/   append-only store interface + in-memory reference backend
-  gateway/       the only writer: admission, acknowledgement, visibility
-scripts/         repository checks
+  protocol/         canonicalization, hashing, signatures, schemas, vectors
+  policy/           freeq-rules-v1, with decidable attenuation
+  projections/      pure folds deriving queryable state from the log
+  event-store/      append-only store + in-memory reference backend
+  gateway/          the only writer: admission, ack, visibility filtering
+  capabilities/     grants, authorization, attenuation
+  governance/       proposals, quorum, elections, execution
+  agents/           action space, adapters, deterministic archetypes
+  observability/    metric registry and evidence-backed reports
+  controller/       run orchestration, genesis to termination
+scripts/            repository checks
 ```
 
 Packages are created when first needed. The
@@ -121,8 +130,62 @@ reality rather than aspiration.
 
 ```bash
 pnpm install
-pnpm typecheck && pnpm test && pnpm build
+pnpm verify        # build, typecheck, test
+pnpm demo          # run a scenario end to end
 ```
+
+## Run it
+
+```console
+$ pnpm demo --run-id=demo
+
+Freeq Foundry — demo
+  scenario   webhook-saas-v1
+  arm        capability_enforced
+  enforce    capability checks enforced
+  population 3 deterministic agents
+
+  ticks       13
+  events      86
+  outcome     SHIPPED
+  termination shipped
+  run clock   0.20 h to release
+  chain       verified
+
+  organization
+    constitution version      2
+    proposals                 4
+    capability grants         3
+    actions denied            0
+```
+
+A population is admitted, proposes a capability grant, votes, executes it, does
+work under that authority, and ships to an evaluator it cannot influence. Every
+step is a signed event. The run writes `events.ndjson`, `manifest.json`,
+`metrics.json`, and an evidence-backed `report.md`.
+
+No model is involved, so it costs nothing and produces identical bytes every time.
+That is deliberate: a scheduler bug is indistinguishable from a bad model response
+unless something in the population is predictable.
+
+### The central contrast, running
+
+[§49.6](docs/specification.md#496-condition-f-unenforced-governance) asks whether
+executable capability enforcement matters. Both arms are runnable today:
+
+```console
+$ pnpm demo --run-id=enforced   --saboteur
+  ticks 16 · events 136 · SHIPPED · 0.25 h · 7 proposals · 1 denial
+
+$ pnpm demo --run-id=unenforced --saboteur --no-enforce
+  ticks  5 · events  51 · SHIPPED · 0.07 h · 1 proposal · 4 denials
+```
+
+The unenforced arm ships **3.5× faster**, because agents with ambient authority
+need not govern themselves at all. Whether that speed costs anything — legitimacy,
+safety, resistance to capture — is what the secondary metrics exist to measure.
+This is a pilot, not evidence: a defensible causal claim needs
+[60 valid runs](docs/research-protocol.md#3-sample-size-30-valid-runs-per-arm).
 
 ## Roadmap
 

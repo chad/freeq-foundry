@@ -36,3 +36,4 @@ data/
 # pnpm
 .pnpm-store/
 *.tsbuildinfo
+out/

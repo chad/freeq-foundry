@@ -1,0 +1,30 @@
+{
+  "name": "@freeq-foundry/foundry",
+  "version": "0.1.0",
+  "description": "CLI: run a scenario end to end and produce the export bundle",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "foundry": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@freeq-foundry/protocol": "workspace:*",
+    "@freeq-foundry/agents": "workspace:*",
+    "@freeq-foundry/controller": "workspace:*",
+    "@freeq-foundry/observability": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.6"
+  }
+}
