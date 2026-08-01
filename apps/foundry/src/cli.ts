@@ -13,7 +13,7 @@
  * Spec: §57 operational runbook.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   RunValidity,
   deterministicKeyPair,
@@ -26,6 +26,7 @@ import {
 } from "@freeq-foundry/agents";
 import {
   executeRun,
+  webhookScenario,
   type ParticipantSpec,
   type Scenario,
 } from "@freeq-foundry/controller";
@@ -57,17 +58,7 @@ function parseArgs(argv: readonly string[]): Options {
   };
 }
 
-const scenario: Scenario = {
-  scenarioId: "webhook-saas-v1",
-  workItems: [
-    { workItemId: "api-endpoint", mandatory: true },
-    { workItemId: "persistence", mandatory: true },
-    { workItemId: "docs", mandatory: false },
-  ],
-  genesisCreditsPerParticipant: 200,
-  maxTicks: 80,
-  msPerTick: 60_000,
-};
+const scenario: Scenario = webhookScenario();
 
 /**
  * Four independent human operators, each with one agent.
@@ -174,6 +165,7 @@ async function main(): Promise<number> {
   log("");
 
   const snapshot = result.state;
+  const mainFiles = result.repository.checkout("main") ?? new Map<string, string>();
   const metrics = computeMetrics(snapshot);
   const primary = metrics.find((m) => m.tier === "primary");
 
@@ -217,10 +209,31 @@ async function main(): Promise<number> {
     "utf8",
   );
 
+  // The product itself, plus the signed evaluator verdicts. A reader can run the
+  // code and check the verdict independently.
+  for (const [path, content] of mainFiles) {
+    const target = join(dir, "product", path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, content, "utf8");
+  }
+  writeFileSync(
+    join(dir, "evaluations.json"),
+    `${JSON.stringify(result.evaluations, null, 2)}\n`,
+    "utf8",
+  );
+  writeFileSync(
+    join(dir, "commit-provenance.json"),
+    `${JSON.stringify(result.repository.provenanceOf("main"), null, 2)}\n`,
+    "utf8",
+  );
+
   log(`  wrote ${join(dir, "events.ndjson")}`);
   log(`  wrote ${join(dir, "report.md")}`);
   log(`  wrote ${join(dir, "manifest.json")}`);
   log(`  wrote ${join(dir, "metrics.json")}`);
+  log(`  wrote ${join(dir, "evaluations.json")}`);
+  log(`  wrote ${join(dir, "commit-provenance.json")}`);
+  log(`  wrote ${join(dir, "product")}/ (${mainFiles.size} files)`);
 
   if (!verification.valid) {
     console.error("\nthe produced chain does not verify; this is a harness bug");

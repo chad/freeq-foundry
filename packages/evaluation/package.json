@@ -1,7 +1,7 @@
 {
-  "name": "@freeq-foundry/controller",
+  "name": "@freeq-foundry/evaluation",
   "version": "0.1.0",
-  "description": "Run orchestration from genesis to termination",
+  "description": "Protected acceptance tests run against produced code by an external evaluator",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
@@ -24,17 +24,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@freeq-foundry/agents": "workspace:*",
-    "@freeq-foundry/capabilities": "workspace:*",
-    "@freeq-foundry/evaluation": "workspace:*",
-    "@freeq-foundry/event-store": "workspace:*",
-    "@freeq-foundry/gateway": "workspace:*",
-    "@freeq-foundry/governance": "workspace:*",
-    "@freeq-foundry/identity": "workspace:*",
-    "@freeq-foundry/policy": "workspace:*",
-    "@freeq-foundry/projections": "workspace:*",
     "@freeq-foundry/protocol": "workspace:*",
-    "@freeq-foundry/repository": "workspace:*",
     "@freeq-foundry/sandbox": "workspace:*"
   },
   "devDependencies": {

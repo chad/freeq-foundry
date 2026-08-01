@@ -7,9 +7,18 @@
 export { EventWriter, type EventWriterOptions } from "./writer.js";
 export {
   executeRun,
+  webhookScenario,
   type ParticipantSpec,
   type RunConfig,
   type RunResult,
   type Scenario,
   type WorkItem,
 } from "./run.js";
+
+export {
+  acceptanceCriteria,
+  starterFiles,
+  webhookTestBundle,
+  workItems,
+  type ProductWorkItem,
+} from "./scenario-webhook.js";

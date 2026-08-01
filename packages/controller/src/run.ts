@@ -69,23 +69,49 @@ import {
   validateProposal,
 } from "@freeq-foundry/governance";
 import { invocationCost, type ActionRequest, type AgentAdapter, type AgentView } from "@freeq-foundry/agents";
+import { Repository, type MergePolicy } from "@freeq-foundry/repository";
+import { NodeSubprocessSandbox, type Sandbox } from "@freeq-foundry/sandbox";
+import {
+  evaluateRelease,
+  publicCriteria,
+  type ProtectedTestBundle,
+} from "@freeq-foundry/evaluation";
 import { EventWriter } from "./writer.js";
+import { starterFiles, webhookTestBundle, workItems as webhookWorkItems, type ProductWorkItem } from "./scenario-webhook.js";
 
-export interface WorkItem {
-  readonly workItemId: string;
-  readonly mandatory: boolean;
-}
+export type WorkItem = ProductWorkItem;
 
 export interface Scenario {
   readonly scenarioId: string;
   readonly workItems: readonly WorkItem[];
+  /** Files the organization starts with (§9.2). */
+  readonly starterFiles: ReadonlyMap<string, string>;
+  /** Protected acceptance tests. Never exposed to an agent (§30). */
+  readonly testBundle: ProtectedTestBundle;
   /** Credits allocated to each participant at genesis (§21.4). */
   readonly genesisCreditsPerParticipant: number;
   /** Hard tick ceiling. A run that cannot end is a run that cannot be analyzed. */
-  readonly maxTicks: number;
+  readonly maxTicks: number
   readonly horizonMs?: number;
   /** Simulated milliseconds per tick, so the run clock advances deterministically. */
   readonly msPerTick?: number;
+  readonly mergePolicy?: MergePolicy;
+  readonly mainBranch?: string;
+}
+
+/** The `webhook-saas-v1` scenario: a real, small product. */
+export function webhookScenario(overrides: Partial<Scenario> = {}): Scenario {
+  return {
+    scenarioId: "webhook-saas-v1",
+    workItems: webhookWorkItems(),
+    starterFiles: starterFiles(),
+    testBundle: webhookTestBundle(),
+    genesisCreditsPerParticipant: 400,
+    maxTicks: 120,
+    msPerTick: 60_000,
+    mainBranch: "main",
+    ...overrides,
+  };
 }
 
 export interface ParticipantSpec {
@@ -131,10 +157,15 @@ export interface RunConfig {
    * produce comparable records.
    */
   readonly enforceCapabilities?: boolean;
+  /** Override the sandbox, so a container-backed runner can be substituted (§31). */
+  readonly sandbox?: Sandbox;
 }
 
 export interface RunResult {
   readonly runId: string;
+  readonly repository: Repository;
+  /** Signed evaluator verdicts, in order. */
+  readonly evaluations: readonly Awaited<ReturnType<typeof evaluateRelease>>[];
   readonly ticks: number;
   readonly terminationReason: RunTerminationReason;
   readonly validity: RunValidity;
@@ -157,6 +188,37 @@ export interface RunResult {
 }
 
 const DEFAULT_MS_PER_TICK = 60_000;
+
+/**
+ * Build a CI smoke test for a specific tree.
+ *
+ * Each module under `src/` is imported individually rather than through the entry
+ * point. A feature branch legitimately has an incomplete tree — the starter entry
+ * point re-exports modules that do not exist yet — so importing it would fail every
+ * branch until the last one landed, and CI would be useless exactly when it matters.
+ *
+ * Deliberately weak beyond that: CI is the organization's own gate, and making it
+ * strong would do the evaluator's job for them. A branch whose code does not parse
+ * must not become mergeable, and that is all this asserts.
+ */
+function buildCiSmokeTest(files: ReadonlyMap<string, string>): string {
+  const modules = [...files.keys()]
+    .filter((path) => path.startsWith("src/") && path.endsWith(".mjs"))
+    .filter((path) => path !== "src/index.mjs")
+    .sort();
+
+  if (modules.length === 0) {
+    return 'console.log("smoke ok: no modules to check");';
+  }
+
+  return [
+    ...modules.map(
+      (path) =>
+        `await import("../${path}").catch((error) => { console.error("${path}: " + error.message); process.exit(1); });`,
+    ),
+    `console.log("smoke ok: ${modules.length} module(s)");`,
+  ].join("\n");
+}
 
 /**
  * Execute a run to termination.
@@ -231,6 +293,13 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     runId: config.runId,
     startWallTimeMs: Date.UTC(2026, 0, 1, 0, 0, 0),
   });
+
+  const mainBranch = scenario.mainBranch ?? "main";
+  const repository = new Repository(
+    scenario.mergePolicy === undefined ? {} : { mergePolicy: scenario.mergePolicy },
+  );
+  const sandbox = config.sandbox ?? new NodeSubprocessSandbox();
+  const evaluations: Awaited<ReturnType<typeof evaluateRelease>>[] = [];
 
   // Genesis. The manifest hash goes inside the record, so a run's membership in a
   // confirmatory set is checkable rather than asserted (ADR-0009).
@@ -364,10 +433,20 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
     });
   }
 
+  // Seed the repository. The controller's initial commit is the only one that does
+  // not require a capability grant, because at genesis no grant can exist yet.
+  repository.initialize(mainBranch, scenario.starterFiles, {
+    actorDid: config.controller.did,
+    terminalHumanDids: [config.controller.did],
+    capabilityGrantId: "genesis",
+  });
+
   for (const item of scenario.workItems) {
     await writer.append(config.controller.did, EventTypes.WORK_ITEM_OPENED, {
       workItemId: item.workItemId,
       mandatory: item.mandatory,
+      description: item.description,
+      path: item.path,
     });
   }
 
@@ -375,6 +454,14 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
 
   const claimedWork = new Map<string, string>();
   const completedWork = new Set<string>();
+  /** Branches an agent has committed to, by work item. */
+  const pushedBranches = new Map<string, string>();
+  /** Branches already the subject of a pull request. */
+  const proposedBranches = new Set<string>();
+  /** Pull requests each agent has already reviewed, to avoid re-reviewing. */
+  const reviewed = new Map<string, Set<string>>();
+  /** Commits the evaluator has already rejected, so agents do not resubmit them. */
+  const rejectedCommits = new Set<string>();
   let tick = 0;
   let terminationReason: RunTerminationReason | undefined;
 
@@ -460,6 +547,7 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
         completedWork,
         horizonMs,
         enforceCapabilities,
+        { repository, mainBranch, pushedBranches, proposedBranches, reviewed, rejectedCommits },
       );
 
       // Scarcity applies even to deterministic agents, or a deterministic arm
@@ -488,6 +576,16 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
           completedWork,
           enforceCapabilities,
           readState,
+          repository,
+          sandbox,
+          mainBranch,
+          pushedBranches,
+          proposedBranches,
+          reviewed,
+          rejectedCommits,
+          evaluations,
+          lineageOf: (did) =>
+            projected.participants.byDid.get(did)?.lineagePseudonym ?? did,
         });
         if (applied) anyProgress = true;
         else break; // Stop at the first refusal (§24.2).
@@ -524,6 +622,8 @@ export async function executeRun(config: RunConfig): Promise<RunResult> {
   const final = await readState();
   return {
     runId: config.runId,
+    repository,
+    evaluations,
     ticks: tick,
     terminationReason: finalReason,
     validity: final.run.validity,
@@ -661,6 +761,14 @@ function buildView(
   completedWork: ReadonlySet<string>,
   horizonMs: number,
   enforceCapabilities: boolean,
+  production: {
+    readonly repository: Repository;
+    readonly mainBranch: string;
+    readonly pushedBranches: ReadonlyMap<string, string>;
+    readonly proposedBranches: ReadonlySet<string>;
+    readonly reviewed: ReadonlyMap<string, ReadonlySet<string>>;
+    readonly rejectedCommits: ReadonlySet<string>;
+  },
 ): AgentView {
   const did = participant.keyPair.did;
   const allocated = state.treasury.creditsByAccount.get(did) ?? 0;
@@ -702,12 +810,61 @@ function buildView(
           namespace,
         })),
     participantDids: [...state.participants.byDid.keys()],
+    grantsByDid: new Map(
+      [...state.participants.byDid.keys()].map((candidate) => [
+        candidate,
+        enforceCapabilities
+          ? [...state.capabilities.grants.values()]
+              .filter((grant) => grant.toDid === candidate && !grant.revoked)
+              .map((grant) => grant.namespace)
+          : AMBIENT_NAMESPACES,
+      ]),
+    ),
     constitutionRuleIds: [...state.constitution.rules.keys()],
     openWorkItems,
     remainingCredits: allocated - spent,
+    // Complete means *merged into main*, not merely committed. An implementation on
+    // a feature branch is not shipped.
     workComplete: scenario.workItems
       .filter((item) => item.mandatory)
       .every((item) => completedWork.has(item.workItemId)),
+    currentCommitRejected: production.rejectedCommits.has(
+      production.repository.head(production.mainBranch) ?? ("" as never),
+    ),
+    myUncommittedWork: [...claimedWork.entries()]
+      .filter(([workItemId, claimant]) => claimant === did && !production.pushedBranches.has(workItemId))
+      .map(([workItemId]) => workItemId),
+    myUnproposedBranches: [...production.pushedBranches.entries()]
+      .filter(
+        ([workItemId, branch]) =>
+          claimedWork.get(workItemId) === did && !production.proposedBranches.has(branch),
+      )
+      .map(([, branch]) => branch),
+    reviewableePullRequests: production.repository.openPullRequests
+      .filter(
+        (pr) =>
+          pr.authorDid !== did &&
+          !(production.reviewed.get(did)?.has(pr.id) ?? false),
+      )
+      .map((pr) => ({
+        pullRequestId: pr.id,
+        authorDid: pr.authorDid,
+        title: pr.title,
+      })),
+    openPullRequestsAuthoredByMe: production.repository.openPullRequests
+      .filter((pr) => pr.authorDid === did)
+      .map((pr) => pr.id),
+    mergeablePullRequests: production.repository.openPullRequests
+      .filter(
+        (pr) =>
+          production.repository.mergeability(pr.id, (reviewer) =>
+            state.participants.byDid.get(reviewer)?.lineagePseudonym ?? reviewer,
+          ).ok,
+      )
+      .map((pr) => pr.id),
+    // Descriptions only. §30: an agent that could read a test could satisfy it
+    // without the code working.
+    acceptanceCriteria: publicCriteria(scenario.testBundle),
   };
 }
 
@@ -737,6 +894,15 @@ interface ApplyContext {
   readonly completedWork: Set<string>;
   readonly enforceCapabilities: boolean;
   readonly readState: () => Promise<Awaited<ReturnType<typeof buildStateShape>>>;
+  readonly repository: Repository;
+  readonly sandbox: Sandbox;
+  readonly mainBranch: string;
+  readonly pushedBranches: Map<string, string>;
+  readonly proposedBranches: Set<string>;
+  readonly reviewed: Map<string, Set<string>>;
+  readonly rejectedCommits: Set<string>;
+  readonly evaluations: Awaited<ReturnType<typeof evaluateRelease>>[];
+  readonly lineageOf: (did: string) => string;
 }
 
 /**
@@ -987,13 +1153,187 @@ async function applyRequest(ctx: ApplyContext): Promise<boolean> {
       return true;
     }
 
-    case "complete_work": {
+    case "commit_work": {
+      if (!(await requireCapability("repo.commit"))) return false;
       if (ctx.claimedWork.get(request.workItemId) !== did) return false;
-      ctx.completedWork.add(request.workItemId);
-      await writer.append(did, EventTypes.WORK_ITEM_COMPLETED, {
-        workItemId: request.workItemId,
-        acceptanceFraction: request.acceptanceFraction,
+
+      const item = ctx.scenario.workItems.find(
+        (candidate) => candidate.workItemId === request.workItemId,
+      );
+      if (item === undefined) return false;
+
+      // The grant actually being exercised is recorded on the commit, so the
+      // §6.4 attribution chain reaches the code itself.
+      const grant = [...state.capabilities.grants.values()].find(
+        (candidate) =>
+          candidate.toDid === did &&
+          !candidate.revoked &&
+          "repo.commit".startsWith(candidate.namespace),
+      );
+      const grantId = grant?.grantId ?? (ctx.enforceCapabilities ? "" : "ambient");
+
+      if (ctx.repository.head(request.branch) === undefined) {
+        const created = ctx.repository.createBranch(request.branch, ctx.mainBranch);
+        if (!created.ok) return false;
+        await writer.append(did, EventTypes.BRANCH_CREATED, {
+          branch: request.branch,
+          fromBranch: ctx.mainBranch,
+        });
+      }
+
+      const committed = ctx.repository.applyPatch({
+        branch: request.branch,
+        patch: { changes: [{ path: item.path, content: item.implementation }] },
+        message: request.message,
+        provenance: {
+          actorDid: did,
+          terminalHumanDids:
+            state.participants.byDid.get(did)?.terminalHumanDids ?? [],
+          capabilityGrantId: grantId,
+        },
+        logicalTime: state.logicalTime,
       });
+
+      if (!committed.ok) {
+        await writer.append(ctx.controller.did, EventTypes.ACTION_DENIED, {
+          actorDid: did,
+          attemptedNamespace: "repo.commit",
+          reason: `${committed.code}: ${committed.reason}`,
+        });
+        return false;
+      }
+
+      ctx.pushedBranches.set(request.workItemId, request.branch);
+      await writer.append(did, EventTypes.COMMIT_CREATED, {
+        branch: request.branch,
+        commitHash: committed.value.hash,
+        path: item.path,
+        workItemId: request.workItemId,
+        capabilityGrantId: grantId,
+      });
+
+      // CI: run the produced tree in the sandbox. A branch that does not even
+      // parse must not become mergeable.
+      const files = ctx.repository.checkout(request.branch) ?? new Map<string, string>();
+      const ci = await ctx.sandbox.run({
+        files: new Map([...files, ["__ci__/smoke.mjs", buildCiSmokeTest(files)]]),
+        entryPoint: "__ci__/smoke.mjs",
+      });
+
+      if (ci.outcome === "succeeded") ctx.repository.recordCiPass(committed.value.hash);
+      // No wall-clock duration in the payload. §37.3 separates platform telemetry
+      // from the canonical log for exactly this reason: a real duration varies
+      // between runs, so recording it here would make a replay of identical inputs
+      // produce different event hashes. Timing belongs in telemetry.
+      await writer.append(ctx.controller.did, EventTypes.CI_COMPLETED, {
+        branch: request.branch,
+        commitHash: committed.value.hash,
+        outcome: ci.outcome,
+        sandboxId: ctx.sandbox.id,
+      });
+      return true;
+    }
+
+    case "open_pull_request": {
+      const opened = ctx.repository.openPullRequest({
+        sourceBranch: request.branch,
+        targetBranch: ctx.mainBranch,
+        title: request.title,
+        authorDid: did,
+        logicalTime: state.logicalTime,
+      });
+      if (!opened.ok) return false;
+      ctx.proposedBranches.add(request.branch);
+      await writer.append(did, EventTypes.PULL_REQUEST_OPENED, {
+        pullRequestId: opened.value.id,
+        sourceBranch: request.branch,
+        targetBranch: ctx.mainBranch,
+        title: request.title,
+      });
+      return true;
+    }
+
+    case "review_pull_request": {
+      if (!(await requireCapability("repo.review"))) return false;
+      const reviewOutcome = ctx.repository.addReview(request.pullRequestId, {
+        reviewerDid: did,
+        verdict: request.verdict,
+        ...(request.note === undefined ? {} : { note: request.note }),
+        logicalTime: state.logicalTime,
+      });
+      if (!reviewOutcome.ok) {
+        // Self-review is refused by the repository, and the refusal is recorded so
+        // the attempt is visible rather than silently dropped.
+        await writer.append(ctx.controller.did, EventTypes.ACTION_DENIED, {
+          actorDid: did,
+          attemptedNamespace: "repo.review",
+          reason: `${reviewOutcome.code}: ${reviewOutcome.reason}`,
+        });
+        return false;
+      }
+      const seen = ctx.reviewed.get(did) ?? new Set<string>();
+      seen.add(request.pullRequestId);
+      ctx.reviewed.set(did, seen);
+
+      await writer.append(did, EventTypes.PULL_REQUEST_REVIEWED, {
+        pullRequestId: request.pullRequestId,
+        verdict: request.verdict,
+      });
+      return true;
+    }
+
+    case "merge_pull_request": {
+      if (!(await requireCapability("repo.merge"))) return false;
+
+      const pr = ctx.repository.pullRequest(request.pullRequestId);
+      if (pr === undefined) return false;
+
+      const merged = ctx.repository.merge({
+        prId: request.pullRequestId,
+        provenance: {
+          actorDid: did,
+          terminalHumanDids:
+            state.participants.byDid.get(did)?.terminalHumanDids ?? [],
+          capabilityGrantId:
+            [...state.capabilities.grants.values()].find(
+              (candidate) =>
+                candidate.toDid === did &&
+                !candidate.revoked &&
+                "repo.merge".startsWith(candidate.namespace),
+            )?.grantId ?? (ctx.enforceCapabilities ? "" : "ambient"),
+        },
+        logicalTime: state.logicalTime,
+        lineageOf: ctx.lineageOf,
+      });
+
+      if (!merged.ok) {
+        // The interesting denials live here: insufficient approvals, approvals all
+        // from one lineage, CI not passed. Each is recorded (§20.7).
+        await writer.append(ctx.controller.did, EventTypes.ACTION_DENIED, {
+          actorDid: did,
+          attemptedNamespace: "repo.merge",
+          reason: `${merged.code}: ${merged.reason}`,
+        });
+        return false;
+      }
+
+      // Merged into main means the work item is done.
+      for (const [workItemId, branch] of ctx.pushedBranches) {
+        if (branch === pr.sourceBranch) ctx.completedWork.add(workItemId);
+      }
+
+      await writer.append(did, EventTypes.PULL_REQUEST_MERGED, {
+        pullRequestId: request.pullRequestId,
+        mergeCommitHash: merged.value.hash,
+        targetBranch: ctx.mainBranch,
+      });
+      for (const [workItemId, branch] of ctx.pushedBranches) {
+        if (branch !== pr.sourceBranch) continue;
+        await writer.append(did, EventTypes.WORK_ITEM_COMPLETED, {
+          workItemId,
+          commitHash: merged.value.hash,
+        });
+      }
       return true;
     }
 
@@ -1003,41 +1343,65 @@ async function applyRequest(ctx: ApplyContext): Promise<boolean> {
         // decided outcome.
         return false;
       }
+
+      const head = ctx.repository.head(ctx.mainBranch);
+      const files = ctx.repository.checkout(ctx.mainBranch);
+      if (head === undefined || files === undefined) return false;
+
       await writer.append(did, EventTypes.RELEASE_SUBMITTED, {
         releaseId: request.releaseId,
+        commitHash: head,
       });
 
-      // The evaluator decides, and only the evaluator. Governance cannot vote
-      // itself successful (§59.10), so this is signed with the evaluator key and
-      // computed from the protected work items rather than from anything an agent
-      // said.
-      const mandatory = ctx.scenario.workItems.filter((item) => item.mandatory);
-      const passed = mandatory.filter((item) => ctx.completedWork.has(item.workItemId));
-      const allPassed = passed.length === mandatory.length && mandatory.length > 0;
-      const fraction =
-        mandatory.length === 0
-          ? "0"
-          : (passed.length / mandatory.length).toFixed(2).replace(/\.?0+$/, "") || "0";
+      // The evaluator runs the organization's actual code against tests the
+      // organization has never seen, and signs the verdict. Governance cannot
+      // produce this result (§59.10).
+      const evaluation = await evaluateRelease({
+        releaseId: request.releaseId,
+        commitHash: head,
+        files,
+        bundle: ctx.scenario.testBundle,
+        sandbox: ctx.sandbox,
+        evaluatorDid: ctx.evaluator.did,
+        evaluatorPrivateKey: ctx.evaluator.privateKey,
+      });
+      ctx.evaluations.push(evaluation);
 
-      if (allPassed) {
+      if (evaluation.verified) {
         await writer.append(ctx.evaluator.did, EventTypes.RELEASE_VERIFIED, {
           releaseId: request.releaseId,
-          mandatoryTestsPassed: passed.length,
-          mandatoryTestsTotal: mandatory.length,
-          acceptanceFraction: "1",
+          commitHash: head,
+          bundleHash: evaluation.bundleHash,
+          mandatoryTestsPassed: evaluation.mandatoryPassed,
+          mandatoryTestsTotal: evaluation.mandatoryTotal,
+          acceptanceFraction: evaluation.acceptanceFraction,
           minimumOperatingPeriodMet: true,
-          evaluatorSignature: "evaluator-attested",
+          evaluatorSignature: evaluation.evaluatorSignature,
         });
       } else {
+        ctx.rejectedCommits.add(head);
         await writer.append(ctx.evaluator.did, EventTypes.RELEASE_REJECTED, {
           releaseId: request.releaseId,
-          mandatoryTestsPassed: passed.length,
-          mandatoryTestsTotal: mandatory.length,
-          acceptanceFraction: fraction,
-          failures: mandatory
-            .filter((item) => !ctx.completedWork.has(item.workItemId))
-            .map((item) => item.workItemId),
+          commitHash: head,
+          bundleHash: evaluation.bundleHash,
+          mandatoryTestsPassed: evaluation.mandatoryPassed,
+          mandatoryTestsTotal: evaluation.mandatoryTotal,
+          acceptanceFraction: evaluation.acceptanceFraction,
+          failures: evaluation.criteria
+            .filter((criterion) => criterion.mandatory && !criterion.passed)
+            .map((criterion) => criterion.id),
         });
+        if (evaluation.secretFindings.length > 0) {
+          // A release that would leak a credential is a safety event, not merely a
+          // failed test (§31).
+          await writer.append(ctx.controller.did, EventTypes.SAFETY_EVENT, {
+            severity: "severe",
+            code: "SECRET_IN_RELEASE",
+            description: `secret-like content in ${evaluation.secretFindings
+              .map((finding) => finding.path)
+              .join(", ")}`,
+          });
+        }
       }
       return true;
     }

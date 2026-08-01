@@ -21,6 +21,14 @@ const view = (overrides: Partial<AgentView> = {}): AgentView => ({
   openWorkItems: [],
   remainingCredits: 100,
   workComplete: false,
+  currentCommitRejected: false,
+  grantsByDid: new Map(),
+  myUncommittedWork: [],
+  myUnproposedBranches: [],
+  reviewableePullRequests: [],
+  mergeablePullRequests: [],
+  openPullRequestsAuthoredByMe: [],
+  acceptanceCriteria: [],
   ...overrides,
 });
 
@@ -56,11 +64,16 @@ describe("deterministic agents", () => {
 describe("builder agent", () => {
   const agent = builderAgent("b", "did:key:zAlice");
 
-  it("proposes commit access when nobody has it", () => {
+  it("proposes repository access for itself when it has none", () => {
+    // For itself, not a fixed target: an agent proposing authority for someone else
+    // never acquires it and proposes forever, which deadlocked a real run.
     const [request] = agent.decide(view());
     expect(request?.type).toBe("open_proposal");
     if (request?.type === "open_proposal") {
-      expect(request.actions[0]).toMatchObject({ namespace: "repo.commit" });
+      expect(request.actions[0]).toMatchObject({
+        namespace: "repo",
+        toDid: "did:key:zAlice",
+      });
       expect(request.constitutionalBasis).toBe("genesis.proposal_rights");
     }
   });
@@ -143,17 +156,88 @@ describe("builder agent", () => {
     expect(requests.some((r) => r.type === "claim_work")).toBe(false);
   });
 
-  it("completes work it has claimed", () => {
+  it("commits work it has claimed", () => {
     const requests = agent.decide(
       view({
-        myGrants: [{ grantId: "g1", namespace: "repo.commit" }],
-        openWorkItems: [{ workItemId: "w1", claimedBy: "did:key:zAlice" }],
+        myGrants: [{ grantId: "g1", namespace: "repo" }],
+        myUncommittedWork: ["w1"],
       }),
     );
-    expect(requests[0]).toMatchObject({ type: "complete_work", workItemId: "w1" });
+    expect(requests[0]).toMatchObject({
+      type: "commit_work",
+      workItemId: "w1",
+      branch: "feature/w1",
+    });
   });
 
-  it("submits a release once the work is done", () => {
+  it("opens a pull request for a branch it has pushed", () => {
+    const requests = agent.decide(
+      view({
+        myGrants: [{ grantId: "g1", namespace: "repo" }],
+        myUnproposedBranches: ["feature/w1"],
+      }),
+    );
+    expect(requests[0]).toMatchObject({ type: "open_pull_request", branch: "feature/w1" });
+  });
+
+  it("reviews another agent's pull request only if it may", () => {
+    // An agent that attempts a denied action every activation never reaches its
+    // later rules, and the organization deadlocks on one participant's optimism.
+    const reviewable = [
+      { pullRequestId: "pr-1", authorDid: "did:key:zBob", title: "t" },
+    ];
+    expect(
+      agent
+        .decide(view({ reviewableePullRequests: reviewable }))
+        .some((r) => r.type === "review_pull_request"),
+    ).toBe(false);
+    expect(
+      agent
+        .decide(
+          view({
+            myGrants: [{ grantId: "g1", namespace: "repo.review" }],
+            reviewableePullRequests: reviewable,
+          }),
+        )
+        .some((r) => r.type === "review_pull_request"),
+    ).toBe(true);
+  });
+
+  it("merges an approved pull request", () => {
+    const requests = agent.decide(
+      view({
+        myGrants: [{ grantId: "g1", namespace: "repo" }],
+        mergeablePullRequests: ["pr-1"],
+      }),
+    );
+    expect(requests[0]).toMatchObject({ type: "merge_pull_request", pullRequestId: "pr-1" });
+  });
+
+  it("proposes review authority when its own pull request cannot be merged", () => {
+    // Noticing an institutional blocker is most of what governance is for.
+    const requests = agent.decide(
+      view({
+        myGrants: [{ grantId: "g1", namespace: "repo" }],
+        openPullRequestsAuthoredByMe: ["pr-1"],
+        mergeablePullRequests: [],
+        participantDids: ["did:key:zAlice", "did:key:zBob"],
+        grantsByDid: new Map([["did:key:zBob", []]]),
+      }),
+    );
+    expect(requests[0]?.type).toBe("open_proposal");
+    if (requests[0]?.type === "open_proposal") {
+      expect(requests[0].actions[0]).toMatchObject({ namespace: "repo.review" });
+    }
+  });
+
+  it("does not resubmit a release for a commit already rejected", () => {
+    // Resubmitting unchanged code cannot produce a different verdict.
+    expect(
+      agent.decide(view({ workComplete: true, currentCommitRejected: true }))[0]?.type,
+    ).not.toBe("submit_release");
+  });
+
+  it("submits a release once the work is merged", () => {
     const requests = agent.decide(view({ workComplete: true }));
     expect(requests[0]?.type).toBe("submit_release");
   });
@@ -213,17 +297,21 @@ describe("institutionalist agent", () => {
 describe("weak saboteur", () => {
   const agent = weakSaboteurAgent("m");
 
-  it("attempts an unauthorized delegation", () => {
-    // §23.2. The denial should appear in the record, which is itself what is
-    // being verified.
+  it("attempts an unauthorized merge whenever it lacks the capability", () => {
+    // §23.2. Not on a tick pattern: a schedule-based trigger silently stops firing
+    // when the run gets shorter, which made an earlier test pass for the wrong
+    // reason.
     const [request] = agent.decide(view({ logicalTime: 3 }));
     expect(request?.type).toBe("delegate_capability");
+    const [other] = agent.decide(view({ logicalTime: 4 }));
+    expect(other?.type).toBe("delegate_capability");
   });
 
   it("votes against everything", () => {
     const requests = agent.decide(
       view({
         logicalTime: 4,
+        myGrants: [{ grantId: "g1", namespace: "repo.merge" }],
         openProposals: [
           {
             proposalId: "p1",

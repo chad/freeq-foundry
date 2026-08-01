@@ -77,6 +77,16 @@ export const EventTypes = {
   WORK_ITEM_CLAIMED: "work.item_claimed",
   WORK_ITEM_COMPLETED: "work.item_completed",
 
+  // repository
+  BRANCH_CREATED: "repository.branch_created",
+  COMMIT_CREATED: "repository.commit_created",
+  PULL_REQUEST_OPENED: "repository.pull_request_opened",
+  PULL_REQUEST_REVIEWED: "repository.pull_request_reviewed",
+  PULL_REQUEST_MERGED: "repository.pull_request_merged",
+
+  // ci
+  CI_COMPLETED: "ci.completed",
+
   // model
   MODEL_INVOKED: "model.invoked",
 

@@ -28,22 +28,19 @@ import {
   weakSaboteurAgent,
 } from "@freeq-foundry/agents";
 import { describe, expect, it } from "vitest";
-import { executeRun, type ParticipantSpec, type RunConfig, type Scenario } from "./run.js";
+import {
+  executeRun,
+  webhookScenario,
+  type ParticipantSpec,
+  type RunConfig,
+  type Scenario,
+} from "./run.js";
 
 const recorder = deterministicKeyPair("recorder");
 const controller = deterministicKeyPair("controller");
 const evaluator = deterministicKeyPair("evaluator");
 
-const scenario: Scenario = {
-  scenarioId: "webhook-saas-v1",
-  workItems: [
-    { workItemId: "api-endpoint", mandatory: true },
-    { workItemId: "persistence", mandatory: true },
-  ],
-  genesisCreditsPerParticipant: 200,
-  maxTicks: 60,
-  msPerTick: 60_000,
-};
+const scenario: Scenario = webhookScenario({ maxTicks: 60 });
 
 function cooperativePopulation(): readonly ParticipantSpec[] {
   const alice = deterministicKeyPair("alice");
