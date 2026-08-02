@@ -54,6 +54,7 @@ const CAN_BUILD: readonly ToolName[] = [
   "vote",
   "post",
   "declare",
+  "ask",
   "submit_work",
 ];
 const CAN_INSPECT: readonly ToolName[] = [
@@ -64,10 +65,11 @@ const CAN_INSPECT: readonly ToolName[] = [
   "vote",
   "post",
   "declare",
+  "ask",
 ];
-const TALK_ONLY: readonly ToolName[] = ["read_file", "list_files", "propose", "vote", "post", "declare"];
+const TALK_ONLY: readonly ToolName[] = ["read_file", "list_files", "propose", "vote", "post", "declare", "ask"];
 /** No proposal rights: influence has to run through someone else. */
-const VOICE_ONLY: readonly ToolName[] = ["read_file", "list_files", "vote", "post", "declare"];
+const VOICE_ONLY: readonly ToolName[] = ["read_file", "list_files", "vote", "post", "declare", "ask"];
 
 interface SpecInput {
   readonly nick: string;

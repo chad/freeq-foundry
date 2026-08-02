@@ -31,6 +31,7 @@ export type ToolName =
   | "post"
   | "dm"
   | "declare"
+  | "ask"
   | "submit_work";
 
 export interface ToolCall {
@@ -100,6 +101,8 @@ export function describeTools(allowed: readonly ToolName[]): string {
       '{"type":"run_tests","args":{}} — run the acceptance smoke test in a sandbox. No network.',
     propose: PROPOSE_HELP,
     vote: '{"type":"vote","args":{"proposalId":"p-1","choice":"yes|no|abstain","rationale":"…"}} — vote on an open proposal',
+    ask:
+      '{"type":"ask","args":{"want":"proposal|file|files","id":"<proposal id or repo path>"}} — ask the registrar for something you missed. Use it rather than voting blind or asking the room to repeat itself.',
     declare:
       '{"type":"declare","args":{"expertise":["auth","billing"],"focus":"one sentence on what you intend to own"}} — publicly claim what you are good at. Permanent, and a bet: work can be restricted to declared expertise, and the tests expose an inflated claim.',
     submit_work:
@@ -196,7 +199,13 @@ export async function runTool(
         output: `Wrote ${relative(context.workspace, path)} (${Buffer.byteLength(content, "utf8")} bytes).`,
         effect: {
           kind: "file_written",
-          detail: { path: relative(context.workspace, path), bytes: Buffer.byteLength(content, "utf8") },
+          // The content travels with the effect: the caller publishes it to the shared
+          // repository over the channel, because no two participants share a disk.
+          detail: {
+            path: relative(context.workspace, path),
+            bytes: Buffer.byteLength(content, "utf8"),
+            content,
+          },
         },
       };
     }
@@ -218,6 +227,16 @@ export async function runTool(
         ),
         effect: { kind: "tests_run", detail: { outcome: result.outcome } },
       };
+    }
+
+    case "ask": {
+      const want = String(call.args["want"] ?? "proposal");
+      const id = String(call.args["id"] ?? "");
+      if (!["proposal", "file", "files"].includes(want)) {
+        return { ok: false, output: 'Refused: want must be "proposal", "file", or "files".' };
+      }
+      if (want !== "files" && id === "") return { ok: false, output: "Refused: ask needs an id." };
+      return { ok: true, output: "Asked the registrar; the answer arrives shortly.", effect: { kind: "ask", detail: { want, id } } };
     }
 
     case "declare": {
@@ -377,9 +396,13 @@ arithmetic: it cannot propose, vote, hold equity, or hold office.
 
 ## 2. Proposals and votes
 
-Every accepted proposal is written to \`proposals/<id>.json\` in the workspace with its
-full terms. If you missed the announcement or cannot recall what a proposal actually
-says, \`read_file\` it before voting. Nobody has to vote blind, and nobody should.
+Participants run on their own machines and share no filesystem. The shared repository
+lives with the registrar: \`write_file\` publishes your file to it over the channel, and
+\`ask\` retrieves anything from it.
+
+If you missed a proposal or cannot recall its terms, use
+\`{"type":"ask","args":{"want":"proposal","id":"p-…"}}\` and the registrar will send you
+the full text. Nobody has to vote blind, and nobody should.
 
 Open a proposal with the \`propose\` tool; vote with the \`vote\` tool. The registrar
 validates both and announces the outcome. Changing your vote is legal; the last one

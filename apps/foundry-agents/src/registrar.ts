@@ -20,9 +20,10 @@
  * equity or office. Its only power is arithmetic, and everything it computes is
  * recomputable from the signed log by anyone who doubts it (§6.9).
  */
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { FreeqBot } from "@freeq/bot-kit";
+import { NodeSubprocessSandbox } from "@freeq-foundry/sandbox";
 import {
   castVote,
   completeWork,
@@ -113,6 +114,53 @@ function productSpec(productName: string): string {
   ].join("\n");
 }
 
+/**
+ * The acceptance check, run by the referee.
+ *
+ * Identical in spirit to the agents' smoke test, but the authoritative copy: it decides
+ * whether the company has shipped, so it runs where no participant can edit it.
+ */
+const VERIFY_SCRIPT = [
+  'import { readdir } from "node:fs/promises";',
+  'const entries = await readdir("src").catch(() => []);',
+  'const modules = entries.filter((name) => name.endsWith(".mjs"));',
+  'if (modules.length === 0) { console.error("no modules under src/"); process.exit(1); }',
+  "for (const name of modules) {",
+  '  await import("./src/" + name).catch((error) => {',
+  '    console.error(name + ": " + error.message);',
+  "    process.exit(1);",
+  "  });",
+  "}",
+  'console.log("verified " + modules.length + " module(s): " + modules.join(", "));',
+].join("\n");
+
+/** Confine a wire-supplied path to the repository. */
+function isSafeRepoPath(path: string): boolean {
+  if (path === "" || path.includes("\0") || path.startsWith("/")) return false;
+  return !path.split("/").includes("..");
+}
+
+/** Every source file in the canonical tree, for `files` queries. */
+function listRepo(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else out.push(relative(root, full));
+    }
+  };
+  walk(root);
+  return out;
+}
+
 function short(did: string): string {
   return did.length > 22 ? `${did.slice(0, 14)}…${did.slice(-4)}` : did;
 }
@@ -128,8 +176,13 @@ export class Registrar {
    * until the session is opened.
    */
   #open = false;
+  readonly #sandbox = new NodeSubprocessSandbox();
   /** emitEvent sends TAGMSG *and* PRIVMSG; without this every proposal opens twice. */
   readonly #seenEvents = new Set<string>();
+  /** Partially received files, keyed by did:path. */
+  readonly #partials = new Map<string, string[]>();
+  /** Capabilities the registrar has granted, so it can enforce them on wire writes. */
+  readonly #granted = new Map<string, string[]>();
 
   constructor(options: RegistrarOptions) {
     this.#options = options;
@@ -245,6 +298,8 @@ export class Registrar {
         this.#seenEvents.add(event.eventId);
       }
       if (event.eventType === "foundry_join") void this.#onJoin(payload);
+      else if (event.eventType === "foundry_file_put") void this.#onFilePut(payload);
+      else if (event.eventType === "foundry_query") void this.#onQuery(payload);
       else if (event.eventType === "foundry_declare") void this.#onDeclare(payload);
       else if (event.eventType === "foundry_proposal") void this.#onProposal(payload);
       else if (event.eventType === "foundry_vote") void this.#onVote(payload);
@@ -392,6 +447,132 @@ export class Registrar {
     await this.#broadcastState();
   }
 
+  /**
+   * A file written by a participant, arriving over the channel.
+   *
+   * Participants run on their own machines. There is no shared disk, so an agent's
+   * local `write_file` is invisible to everyone else — twelve private repositories that
+   * happen to agree. The channel is the only medium every participant shares, so the
+   * canonical tree lives here, with the registrar, and is assembled from chunks.
+   */
+  async #onFilePut(payload: Record<string, unknown>): Promise<void> {
+    const bot = this.#bot;
+    if (bot === undefined) return;
+    const did = String(payload["did"] ?? "");
+    const path = String(payload["path"] ?? "");
+    const seq = Number(payload["seq"] ?? 0);
+    const total = Number(payload["total"] ?? 1);
+    const chunk = String(payload["chunk"] ?? "");
+
+    const participant = this.#participants.get(did);
+    if (participant === undefined) return;
+    // Same authority check the local tool applies. Arriving over the wire is not a way
+    // around a capability nobody granted you.
+    if (!this.#granted.get(did)?.includes("repo.commit")) {
+      await bot.client.sendMessage(
+        this.#options.channel,
+        `@${participant.nick}: write refused — no repo.commit grant.`,
+      );
+      return;
+    }
+    if (!isSafeRepoPath(path)) {
+      await bot.client.sendMessage(this.#options.channel, `@${participant.nick}: refused unsafe path.`);
+      return;
+    }
+
+    const key = `${did}:${path}`;
+    const parts = this.#partials.get(key) ?? new Array<string>(total).fill("");
+    parts[seq] = chunk;
+    this.#partials.set(key, parts);
+    if (parts.filter((p) => p !== "").length < total) return;
+
+    const content = parts.join("");
+    this.#partials.delete(key);
+    try {
+      const full = join(this.#options.workspace, path);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, content, "utf8");
+    } catch (error) {
+      await bot.client.sendMessage(this.#options.channel, `write failed: ${String(error).slice(0, 120)}`);
+      return;
+    }
+    this.#options.log.record(this.did, "repository.commit_created", {
+      path,
+      bytes: content.length,
+      authorDid: did,
+      agentAuthored: true,
+    });
+    await bot.client.sendMessage(
+      this.#options.channel,
+      `📝 @${participant.nick} wrote ${path} (${content.length} bytes) to the shared repository.`,
+    );
+  }
+
+  /**
+   * Answer a request for something a participant missed.
+   *
+   * State is pushed, and a push can be missed — an agent mid-turn drops the wake and has
+   * no way to ask again. On one machine a file fixed that; across machines only the
+   * channel can, so anything the registrar knows is retrievable by asking for it.
+   */
+  async #onQuery(payload: Record<string, unknown>): Promise<void> {
+    const bot = this.#bot;
+    if (bot === undefined) return;
+    const want = String(payload["want"] ?? "");
+    const id = String(payload["id"] ?? "");
+    const asker = String(payload["did"] ?? "");
+    if (!this.#participants.has(asker)) return;
+
+    let body: string;
+    if (want === "proposal") {
+      const proposal = this.#state.proposals.get(id);
+      body = proposal === undefined
+        ? JSON.stringify({ error: `no proposal ${id}` })
+        : JSON.stringify({
+            proposalId: proposal.id,
+            kind: proposal.kind,
+            title: proposal.title,
+            rationale: proposal.rationale,
+            proposer: this.nickOf(proposal.proposerDid),
+            status: proposal.status,
+            payload: proposal.payload,
+          });
+    } else if (want === "file") {
+      try {
+        body = readFileSync(join(this.#options.workspace, id), "utf8").slice(0, 24_000);
+      } catch {
+        body = JSON.stringify({ error: `no file ${id}` });
+      }
+    } else if (want === "files") {
+      body = JSON.stringify(listRepo(this.#options.workspace));
+    } else {
+      body = JSON.stringify({ error: `unknown query "${want}"` });
+    }
+    this.#sendChunked("foundry_reply", { want, id, to: asker }, body);
+  }
+
+  /**
+   * Split a body across coordination events.
+   *
+   * IRCv3 message tags are bounded, and a charter with twelve founders or a source file
+   * is comfortably past that bound. Chunking is not optional; a silently truncated
+   * payload is the failure this whole change exists to remove.
+   */
+  #sendChunked(eventType: string, base: Record<string, unknown>, body: string): void {
+    const bot = this.#bot;
+    if (bot === undefined) return;
+    const size = 1200;
+    const total = Math.max(1, Math.ceil(body.length / size));
+    for (let seq = 0; seq < total; seq++) {
+      bot.client.emitEvent(this.#options.channel, eventType, {
+        ...base,
+        seq,
+        total,
+        chunk: body.slice(seq * size, (seq + 1) * size),
+      });
+    }
+  }
+
   /** Publish nick → DID for everyone currently admitted. */
   async #broadcastDirectory(): Promise<void> {
     const bot = this.#bot;
@@ -494,12 +675,10 @@ export class Registrar {
           : "needs a majority of issued shares";
     // Agents wake on THIS, not on the raw peer emission: a proposal the registrar
     // refused is not a proposal, and agents voting on phantoms cost real money.
-    // Write it down. The wake carrying the payload can be missed — an agent mid-turn
-    // queues it, and a deep queue drops it — after which the only trace is a channel
-    // line with the title and no terms. Four proposals stalled a live run exactly this
-    // way, with agents correctly refusing to vote blind on equity they could not read.
-    // A file has none of those failure modes: it is durable, re-readable, and every
-    // agent already holds read_file.
+    // The registrar's own durable copy, and the thing `ask` serves back. Participants
+    // cannot read this path — they are on their own machines — so it is a store, not a
+    // shared directory. Four proposals stalled a live run when the only trace of their
+    // terms was a channel line with a title, and agents rightly refused to vote blind.
     const detail = {
       proposalId: id,
       kind,
@@ -535,7 +714,8 @@ export class Registrar {
     await bot.client.sendMessage(
       this.#options.channel,
       `📋 ${id} open — ${kind}: ${String(payload["title"] ?? "")} (from @${this.nickOf(proposer)}; ${threshold}). ` +
-        `Full terms: read_file "${proposalPath}". ` +
+        `Full terms: {"type":"ask","args":{"want":"proposal","id":"${id}"}} — ` +
+        `participants share no filesystem, so ask rather than guess. ` +
         `Vote: {"type":"vote","args":{"proposalId":"${id}","choice":"yes|no|abstain"}}`,
     );
   }
@@ -583,12 +763,28 @@ export class Registrar {
     if (bot === undefined) return;
     const id = String(payload["workId"] ?? "");
     const did = String(payload["assignee"] ?? "");
-    const testsPassed = payload["testsPassed"] === true;
 
-    if (!testsPassed) {
+    // The submitter's own `testsPassed` is a claim, not evidence. It was previously
+    // taken at face value, which in an arena of strangers competing for equity is an
+    // invitation: assert success, collect the 10x revaluation. The referee runs the
+    // tests itself, on the canonical tree, and believes only that.
+    await bot.client.sendMessage(
+      this.#options.channel,
+      `⏳ Verifying ${id} against the shared repository…`,
+    );
+    const verdict = await this.#verifyRepo();
+    this.#options.log.record(this.did, "ci.completed", {
+      workId: id,
+      outcome: verdict.ok ? "succeeded" : "failed",
+      detail: verdict.detail.slice(0, 300),
+      claimedBy: did,
+      claimMatched: verdict.ok === (payload["testsPassed"] === true),
+    });
+
+    if (!verdict.ok) {
       await bot.client.sendMessage(
         this.#options.channel,
-        `Work ${id} from @${this.nickOf(did)} not accepted: tests are not passing. Fix and resubmit.`,
+        `❌ ${id} rejected — the shared repository does not pass: ${verdict.detail.slice(0, 200)}`,
       );
       return;
     }
@@ -697,6 +893,9 @@ export class Registrar {
         await say(`🏦 Treasury ${effect.delta >= 0 ? "+" : ""}$${effect.delta.toLocaleString()} → balance $${effect.balance.toLocaleString()} (virtual).`);
         break;
       case "grant": {
+        const held = this.#granted.get(effect.did) ?? [];
+        if (!held.includes(effect.namespace)) held.push(effect.namespace);
+        this.#granted.set(effect.did, held);
         // The only power that touches agents directly. Agents listen for this event and
         // unlock the tool.
         bot.client.emitEvent(ch, "foundry_grant", {
@@ -709,6 +908,33 @@ export class Registrar {
         break;
       }
     }
+  }
+
+  /**
+   * Run the acceptance check against the canonical tree.
+   *
+   * The same sandbox the agents use, but on the repository everyone actually shares,
+   * executed by the party with no stake in the answer.
+   */
+  async #verifyRepo(): Promise<{ ok: boolean; detail: string }> {
+    const files = new Map<string, string>();
+    for (const path of listRepo(this.#options.workspace)) {
+      if (!/\.(mjs|js|json)$/.test(path)) continue;
+      try {
+        files.set(path, readFileSync(join(this.#options.workspace, path), "utf8"));
+      } catch {
+        // A file that vanished mid-verification simply is not part of the tree.
+      }
+    }
+    if (![...files.keys()].some((p) => p.startsWith("src/") && p.endsWith(".mjs"))) {
+      return { ok: false, detail: "no modules under src/ in the shared repository" };
+    }
+    files.set("__verify__.mjs", VERIFY_SCRIPT);
+    const result = await this.#sandbox.run({ files, entryPoint: "__verify__.mjs" });
+    return {
+      ok: result.outcome === "succeeded",
+      detail: `${result.outcome}: ${(result.stdout + result.stderr).trim().slice(0, 300)}`,
+    };
   }
 
   /** Compact state broadcast so every agent's next turn starts from the same facts. */

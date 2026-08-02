@@ -92,6 +92,8 @@ export class CorporateAgent {
   #lastTestsPassed = false;
   /** Link state, tracked from the SDK's connected/disconnected events. */
   #linkUp = true;
+  /** Chunked replies being reassembled, keyed by want:id. */
+  readonly #replies = new Map<string, string[]>();
   /** Last `foundry_state` broadcast, verbatim — the agent's picture of the company. */
   #corpState: Record<string, unknown> = {};
   /** nick -> DID, published by the registrar. */
@@ -217,6 +219,23 @@ export class CorporateAgent {
           this.#corpState = payload;
           break;
 
+        case "foundry_reply": {
+          if (payload["to"] !== this.did) break;
+          const key = `${String(payload["want"])}:${String(payload["id"])}`;
+          const total = Number(payload["total"] ?? 1);
+          const parts = this.#replies.get(key) ?? new Array<string>(total).fill("");
+          parts[Number(payload["seq"] ?? 0)] = String(payload["chunk"] ?? "");
+          this.#replies.set(key, parts);
+          if (parts.filter((p) => p !== "").length < total) break;
+          this.#replies.delete(key);
+          const body = parts.join("");
+          void this.#takeTurn({
+            trigger: `You asked for ${key}. Here it is in full:\n\n${body.slice(0, 8000)}\n\nAct on it.`,
+            speaker: "registrar",
+          }, true);
+          break;
+        }
+
         case "foundry_directory": {
           const directory = payload["directory"];
           if (directory !== null && typeof directory === "object") {
@@ -265,7 +284,7 @@ export class CorporateAgent {
           const terms = JSON.stringify(payload["proposalPayload"] ?? {});
           this.#remember(
             `[proposal] ${id} (${String(payload["kind"] ?? "")}): ${String(payload["title"] ?? "")} — ` +
-              `terms ${terms.slice(0, 300)} — full text: read_file "${String(payload["proposalPath"] ?? "")}"`,
+              `terms ${terms.slice(0, 300)} — full text: ask for proposal ${id}`,
           );
           // One wake per proposal. An agent that already voted has said its piece.
           if (this.#votedOn.has(id)) break;
@@ -277,9 +296,9 @@ export class CorporateAgent {
             trigger:
               `Proposal ${id} is open — read it in full and vote yes, no, or abstain, ` +
               `with a reason.\n\n${JSON.stringify(payload, null, 1).slice(0, 6000)}\n\n` +
-              `If anything here is unclear, read_file "${String(payload["proposalPath"] ?? "")}" ` +
-              `for the full terms before voting. Silence kills proposals, and abstaining ` +
-              `counts against the yes side.`,
+              `If anything is unclear or truncated, ask for it — ` +
+              `{"type":"ask","args":{"want":"proposal","id":"${id}"}} — rather than voting ` +
+              `blind. Silence kills proposals, and abstaining counts against the yes side.`,
             speaker: event.from,
           }, true);
           break;
@@ -662,18 +681,40 @@ export class CorporateAgent {
         });
         break;
 
-      case "file_written":
-        bot.client.emitEvent(this.#options.channel, "foundry_commit", {
-          ...effect.detail,
-          author: this.did,
-        }, {
-          humanText: `📝 wrote ${String(effect.detail["path"])}`,
-        });
+      case "file_written": {
+        // The local write is scratch space; the shared repository lives with the
+        // registrar. Participants run on their own machines with no disk between them,
+        // so a file that never crosses the channel does not exist for anyone else.
+        const path = String(effect.detail["path"] ?? "");
+        const content = String(effect.detail["content"] ?? "");
+        const size = 1200;
+        const total = Math.max(1, Math.ceil(content.length / size));
+        for (let seq = 0; seq < total; seq++) {
+          bot.client.emitEvent(this.#options.channel, "foundry_file_put", {
+            did: this.did,
+            path,
+            seq,
+            total,
+            chunk: content.slice(seq * size, (seq + 1) * size),
+          }, seq === 0 ? { humanText: `📝 publishing ${path} (${content.length} bytes)` } : {});
+        }
         this.#options.log.record(this.did, "repository.commit_created", {
-          ...effect.detail,
+          path,
+          bytes: content.length,
+          chunks: total,
           agentAuthored: true,
         });
         break;
+      }
+
+      case "ask": {
+        bot.client.emitEvent(this.#options.channel, "foundry_query", {
+          did: this.did,
+          want: String(effect.detail["want"] ?? "proposal"),
+          id: String(effect.detail["id"] ?? ""),
+        }, { humanText: `❓ ${this.spec.nick} asks for ${String(effect.detail["id"] ?? "")}` });
+        break;
+      }
 
       case "tests_run": {
         const passed = effect.detail["outcome"] === "succeeded";
