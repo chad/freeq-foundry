@@ -13,7 +13,7 @@
  * participant outside the platform's trust boundary, and an agent that could sign its
  * own position could reorder history.
  */
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   GENESIS_HASH,
@@ -23,6 +23,7 @@ import {
   verifyChain,
   type ChainVerification,
   type Digest,
+  type VisibilityPolicy,
   type KeyPair,
   type RecordedEvent,
 } from "@freeq-foundry/protocol";
@@ -45,6 +46,17 @@ export class FoundryLog {
   constructor(options: FoundryLogOptions) {
     this.#options = options;
     mkdirSync(dirname(options.path), { recursive: true });
+
+    // Reusing a run id appends a second chain onto the first: logical time restarts at
+    // zero, event ids collide, and the hash chain breaks at the seam. A verifier reports
+    // it as tampering, which is the correct reading — the file really does contain two
+    // histories. Refuse rather than quietly merge two experiments.
+    if (existsSync(options.path) && statSync(options.path).size > 0) {
+      throw new Error(
+        `${options.path} already contains a run. Choose a different --run-id, or delete it. ` +
+          `Appending would splice two chains into one file and every verifier would call it invalid.`,
+      );
+    }
   }
 
   get events(): readonly RecordedEvent[] {
@@ -63,7 +75,19 @@ export class FoundryLog {
    * buffered in memory is a log that loses the last thing that happened — which is
    * usually the interesting thing.
    */
-  record(actorDid: string, eventType: string, payload: unknown): RecordedEvent | undefined {
+  record(
+    actorDid: string,
+    eventType: string,
+    payload: unknown,
+    /**
+     * Who may see this event.
+     *
+     * Private events are still signed and chained — the record is complete — but the
+     * arena's information regime decides what rivals observe in real time. Auditability
+     * and secrecy are not in conflict when they live on different timelines.
+     */
+    visibility: VisibilityPolicy = { type: "public" },
+  ): RecordedEvent | undefined {
     const signer = this.#options.signers.get(actorDid);
     if (signer === undefined) return undefined;
 
@@ -75,7 +99,7 @@ export class FoundryLog {
 
     let recorded: RecordedEvent;
     try {
-      recorded = this.#build(actorDid, eventType, sanitizePayload(payload), sequence, signer);
+      recorded = this.#build(actorDid, eventType, sanitizePayload(payload), sequence, signer, visibility);
     } catch (error) {
       // Payloads originate with language models, so "un-canonicalizable" is a normal
       // input, not an exceptional one. Record the failure in place of the payload so
@@ -87,6 +111,7 @@ export class FoundryLog {
           { canonicalizationFailed: String(error).slice(0, 300) },
           sequence,
           signer,
+          visibility,
         );
       } catch {
         // Cannot record anything for this actor; leave the sequence unconsumed.
@@ -108,6 +133,7 @@ export class FoundryLog {
     payload: unknown,
     sequence: number,
     signer: KeyPair,
+    visibility: VisibilityPolicy = { type: "public" },
   ): RecordedEvent {
     const attested = attestEvent(
       {
@@ -120,7 +146,7 @@ export class FoundryLog {
         participantSequence: sequence,
         wallTime: new Date().toISOString(),
         payload,
-        visibility: { type: "public" },
+        visibility,
         references: [],
         provenance: {
           signerDid: actorDid,

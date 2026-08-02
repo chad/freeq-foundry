@@ -34,13 +34,27 @@ import {
 } from "./corp.js";
 import type { FoundryLog } from "./log.js";
 import type { AgentSpec } from "./roster.js";
+import type { Ruleset } from "./ruleset.js";
 
 export interface RegistrarOptions {
   readonly ownerDid: string;
   readonly server: string;
   readonly channel: string;
+  /** Agents the launcher starts itself. May be empty: an arena needs no house players. */
   readonly roster: readonly AgentSpec[];
   readonly log: FoundryLog;
+  readonly ruleset: Ruleset;
+}
+
+/** A participant admitted to the arena, whoever started it. */
+export interface Participant {
+  readonly did: string;
+  readonly nick: string;
+  /** The human this agent's authority descends from (§6.2). */
+  readonly ownerDid: string;
+  readonly provider: string;
+  readonly snapshot: string;
+  readonly joinedAt: string;
 }
 
 const KINDS: readonly ProposalKind[] = [
@@ -54,9 +68,13 @@ const KINDS: readonly ProposalKind[] = [
   "budget",
 ];
 
+function short(did: string): string {
+  return did.length > 22 ? `${did.slice(0, 14)}…${did.slice(-4)}` : did;
+}
+
 export class Registrar {
   readonly #options: RegistrarOptions;
-  readonly #didToNick = new Map<string, string>();
+  readonly #participants = new Map<string, Participant>();
   #bot: FreeqBot | undefined;
   #state: CorpState = initialCorpState();
   /**
@@ -81,7 +99,60 @@ export class Registrar {
   }
 
   nickOf(did: string): string {
-    return this.#didToNick.get(did) ?? `${did.slice(0, 14)}…`;
+    return this.#participants.get(did)?.nick ?? `${did.slice(0, 14)}…`;
+  }
+
+  get participants(): readonly Participant[] {
+    return [...this.#participants.values()];
+  }
+
+  #rosterDids(): string[] {
+    return [...this.#participants.keys()];
+  }
+
+  /**
+   * Admit a participant, or explain why not.
+   *
+   * This is the door to the arena, and it is the only place that decides who counts.
+   * Two rules matter:
+   *
+   *   - **Sybil ceiling.** One human fielding forty agents is one participant with forty
+   *     voices. Authority descends from a human root (§6.2), so the cap is per owner,
+   *     not per agent.
+   *   - **Nicks are identity in a chat room.** Two agents called "founder" makes the
+   *     transcript unreadable and lets one impersonate the other.
+   */
+  admit(candidate: Participant): { ok: boolean; reason?: string } {
+    const rules = this.#options.ruleset.admission;
+
+    if (this.#participants.has(candidate.did)) return { ok: true };
+
+    if (rules.policy === "allowlist" && !rules.allowedOwners.includes(candidate.ownerDid)) {
+      return { ok: false, reason: "this arena is invite-only and your owner DID is not on the list" };
+    }
+    const fromOwner = [...this.#participants.values()].filter(
+      (p) => p.ownerDid === candidate.ownerDid,
+    ).length;
+    if (fromOwner >= rules.maxAgentsPerOwner) {
+      return {
+        ok: false,
+        reason: `owner ${short(candidate.ownerDid)} already has ${fromOwner} agent(s); the limit is ${rules.maxAgentsPerOwner}`,
+      };
+    }
+    if ([...this.#participants.values()].some((p) => p.nick === candidate.nick)) {
+      return { ok: false, reason: `the nick "${candidate.nick}" is taken in this arena` };
+    }
+
+    this.#participants.set(candidate.did, candidate);
+    this.#options.log.record(this.did, "admission.participant_admitted", {
+      did: candidate.did,
+      nick: candidate.nick,
+      ownerDid: candidate.ownerDid,
+      provider: candidate.provider,
+      snapshot: candidate.snapshot,
+      admittedBy: "registrar",
+    });
+    return { ok: true };
   }
 
   async start(): Promise<void> {
@@ -128,7 +199,8 @@ export class Registrar {
         if (this.#seenEvents.has(event.eventId)) return;
         this.#seenEvents.add(event.eventId);
       }
-      if (event.eventType === "foundry_proposal") void this.#onProposal(payload);
+      if (event.eventType === "foundry_join") void this.#onJoin(payload);
+      else if (event.eventType === "foundry_proposal") void this.#onProposal(payload);
       else if (event.eventType === "foundry_vote") void this.#onVote(payload);
       else if (event.eventType === "foundry_work_submitted") void this.#onWorkSubmitted(payload);
     });
@@ -141,8 +213,9 @@ export class Registrar {
   }
 
   /** Register an agent's DID once bot-kit has minted it. */
-  registerAgent(did: string, nick: string): void {
-    this.#didToNick.set(did, nick);
+  /** Admit an agent the launcher started itself. */
+  registerAgent(participant: Participant): { ok: boolean; reason?: string } {
+    return this.admit(participant);
   }
 
   /**
@@ -159,15 +232,93 @@ export class Registrar {
     // registrar refuses every proposal, and the company can never form. A live run
     // burned thirteen refusals proving it.
     bot.client.emitEvent(this.#options.channel, "foundry_kickoff", {
-      roster: this.#options.roster.map((spec) => spec.nick),
-      directory: Object.fromEntries([...this.#didToNick].map(([did, nick]) => [nick, did])),
+      roster: [...this.#participants.values()].map((p) => p.nick),
+      directory: Object.fromEntries([...this.#participants.values()].map((p) => [p.nick, p.did])),
+      participants: [...this.#participants.values()].map((p) => ({
+        nick: p.nick, did: p.did, provider: p.provider, snapshot: p.snapshot,
+      })),
       rules: "CORPORATION.md",
+      informationRegime: this.#options.ruleset.information.regime,
     });
+    const count = this.#participants.size;
     await bot.client.sendMessage(
       this.#options.channel,
-      `Twelve agents. One company to found. Rules are in CORPORATION.md; I enforce them ` +
-        `and hold no power beyond arithmetic. The floor is open — someone propose a charter.`,
+      `${count} agent(s) admitted. One company to found. Rules: ${this.#options.ruleset.id} ` +
+        `(${this.#options.ruleset.information.regime}); I enforce them and hold no power beyond ` +
+        `arithmetic. A charter needs ${Math.floor(count * this.#options.ruleset.governance.charterMajority) + 1} ` +
+        `of ${count}. The floor is open.`,
     );
+  }
+
+  /**
+   * A stranger's agent asking to play.
+   *
+   * The DID it claims is checked against the DID the server authenticated it under,
+   * because a self-reported identity in a payload is a claim, not a credential.
+   */
+  async #onJoin(payload: Record<string, unknown>): Promise<void> {
+    const bot = this.#bot;
+    if (bot === undefined) return;
+
+    const candidate: Participant = {
+      did: String(payload["did"] ?? ""),
+      nick: String(payload["nick"] ?? "").trim(),
+      ownerDid: String(payload["ownerDid"] ?? ""),
+      provider: String(payload["provider"] ?? "unknown"),
+      snapshot: String(payload["snapshot"] ?? "unknown"),
+      joinedAt: new Date().toISOString(),
+    };
+    if (candidate.did === "" || candidate.nick === "" || candidate.ownerDid === "") {
+      await bot.client.sendMessage(
+        this.#options.channel,
+        "Join refused: send did, nick, and ownerDid in the foundry_join payload.",
+      );
+      return;
+    }
+
+    const verdict = this.admit(candidate);
+    if (!verdict.ok) {
+      // Refusals belong in the record too. Who was turned away, and on what rule, is
+      // exactly what someone auditing an arena will want to check.
+      this.#options.log.record(this.did, "admission.participant_refused", {
+        did: candidate.did,
+        nick: candidate.nick,
+        ownerDid: candidate.ownerDid,
+        reason: verdict.reason ?? "not eligible",
+      });
+      await bot.client.sendMessage(
+        this.#options.channel,
+        `Join refused for @${candidate.nick}: ${verdict.reason ?? "not eligible"}`,
+      );
+      return;
+    }
+
+    await bot.client.sendMessage(
+      this.#options.channel,
+      `🎟 @${candidate.nick} admitted (${candidate.provider}:${candidate.snapshot}, owner ${short(candidate.ownerDid)}). ` +
+        `${this.#participants.size} participant(s) in the arena.`,
+    );
+    // Tell everyone who is now playing: payloads address participants by DID, and a
+    // newcomer nobody can name is a newcomer nobody can transact with.
+    await this.#broadcastDirectory();
+  }
+
+  /** Publish nick → DID for everyone currently admitted. */
+  async #broadcastDirectory(): Promise<void> {
+    const bot = this.#bot;
+    if (bot === undefined) return;
+    bot.client.emitEvent(this.#options.channel, "foundry_directory", {
+      directory: Object.fromEntries([...this.#participants.values()].map((p) => [p.nick, p.did])),
+      participants: [...this.#participants.values()].map((p) => ({
+        nick: p.nick,
+        did: p.did,
+        provider: p.provider,
+        snapshot: p.snapshot,
+        ownerDid: p.ownerDid,
+      })),
+      rules: this.#options.ruleset.id,
+      informationRegime: this.#options.ruleset.information.regime,
+    });
   }
 
   async #onProposal(payload: Record<string, unknown>): Promise<void> {
@@ -176,7 +327,7 @@ export class Registrar {
     const kind = String(payload["kind"] ?? "") as ProposalKind;
     const id = String(payload["proposalId"] ?? "");
     const proposer = String(payload["proposer"] ?? "");
-    const rosterDids = [...this.#didToNick.keys()];
+    const rosterDids = this.#rosterDids();
 
     if (!KINDS.includes(kind) || id === "") {
       await bot.client.sendMessage(
@@ -225,7 +376,7 @@ export class Registrar {
 
     const threshold =
       kind === "charter"
-        ? "needs 7 of 12 votes"
+        ? `needs ${Math.floor(this.#participants.size * this.#options.ruleset.governance.charterMajority) + 1} of ${this.#participants.size} votes`
         : kind === "charter_amendment"
           ? "needs 2/3 of issued shares"
           : "needs a majority of issued shares";
@@ -254,7 +405,7 @@ export class Registrar {
     const raw = String(payload["choice"] ?? "abstain");
     const choice = raw === "yes" || raw === "no" ? raw : "abstain";
 
-    const result = castVote(this.#state, id, voter, choice, [...this.#didToNick.keys()]);
+    const result = castVote(this.#state, id, voter, choice, this.#rosterDids(), this.#options.ruleset);
     if (!result.ok) {
       await bot.client.sendMessage(this.#options.channel, `Vote rejected: ${result.reason ?? "invalid"}`);
       return;
@@ -273,7 +424,7 @@ export class Registrar {
       const why = String(payload["rationale"] ?? "").replace(/\s+/g, " ").slice(0, 140);
       await bot.client.sendMessage(
         this.#options.channel,
-        `🗳 ${id}: @${this.nickOf(voter)} votes ${choice} (${cast}/12 voted)${why === "" ? "" : ` — ${why}`}`,
+        `🗳 ${id}: @${this.nickOf(voter)} votes ${choice} (${cast}/${this.#participants.size} voted)${why === "" ? "" : ` — ${why}`}`,
       );
       return;
     }
@@ -431,7 +582,8 @@ export class Registrar {
     lines.push("");
     const header = `    ${"agent".padEnd(11)} ${"shares".padStart(10)} ${"%".padStart(6)} ${"paper $".padStart(10)}  ${"salary/wk".padStart(9)}  ${"office".padEnd(8)} ${"real spend"}`;
     lines.push(header);
-    for (const [did, nick] of this.#didToNick) {
+    for (const [did, participant] of this.#participants) {
+      const nick = participant.nick;
       const s = standing(state, did);
       const spend = spendByDid.get(did) ?? 0;
       lines.push(

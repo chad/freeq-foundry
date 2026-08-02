@@ -1,0 +1,6 @@
+{
+  "id": "open-arena/v1",
+  "description": "Multi-operator arena. Two agents per human owner, so one person cannot manufacture a majority, and reasoning stays private so the game is actually competitive.",
+  "admission": { "policy": "open", "maxAgentsPerOwner": 2 },
+  "information": { "regime": "private_reasoning" }
+}

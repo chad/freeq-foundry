@@ -68,6 +68,21 @@ describe("FoundryLog", () => {
     expect(log.verify().valid).toBe(true);
   });
 
+  it("refuses to append a second run onto an existing log", () => {
+    log.record(actor.did, "first-run", {});
+    // A researcher re-running an experiment with the same id must not silently splice
+    // two histories together; a live run produced 18 chain violations exactly this way.
+    expect(
+      () =>
+        new FoundryLog({
+          runId: "test-run",
+          path: join(dir, "events.ndjson"),
+          recorder: deterministicKeyPair("test-recorder"),
+          signers: new Map([[actor.did, actor]]),
+        }),
+    ).toThrow(/already contains a run/);
+  });
+
   it("does not consume a sequence for an unknown signer", () => {
     expect(log.record("did:key:stranger", "x", {})).toBeUndefined();
     log.record(actor.did, "y", {});

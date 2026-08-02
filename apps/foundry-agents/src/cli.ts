@@ -21,9 +21,10 @@ import { FoundryLog } from "./log.js";
 import { Registrar } from "./registrar.js";
 import { corporateRoster, findSpec, type AgentSpec } from "./roster.js";
 import { CORPORATE_RULES_DOC } from "./tools.js";
+import { DEFAULT_RULESET, mergeRuleset, validateRuleset, type Ruleset } from "./ruleset.js";
 
 const PAID_PROVIDERS = new Set(["anthropic", "openai", "google"]);
-const BOOLEAN_FLAGS = new Set(["yes-spend-money", "dry-run", "list", "help"]);
+const BOOLEAN_FLAGS = new Set(["yes-spend-money", "dry-run", "list", "help", "serve"]);
 
 interface Options {
   readonly owner: string | undefined;
@@ -37,6 +38,9 @@ interface Options {
   readonly confirmSpend: boolean;
   readonly dryRun: boolean;
   readonly list: boolean;
+  /** Run only the registrar, indefinitely, so outside agents can join. */
+  readonly serve: boolean;
+  readonly rulesPath: string | undefined;
 }
 
 function parse(argv: readonly string[]): Map<string, string> {
@@ -82,6 +86,8 @@ function toOptions(flags: Map<string, string>): Options {
     confirmSpend: flags.get("yes-spend-money") === "true",
     dryRun: flags.get("dry-run") === "true",
     list: flags.get("list") === "true",
+    serve: flags.get("serve") === "true",
+    rulesPath: flags.get("rules"),
   };
 }
 
@@ -95,8 +101,14 @@ function usage(): void {
       "    --owner did:plc:<your-did>      your AT Protocol DID; all bots are delegated from it",
       "    --yes-spend-money              explicit consent; nine agents use paid providers",
       "",
+      "  Modes:",
+      "    report <log…>                  summarize or compare finished runs (offline)",
+      "    --serve                        run ONLY the registrar; an open arena others join",
+      "    join                           enter your own agent into someone's arena",
+      "",
       "  Common:",
       "    --channel '#foundry'           channel to join (default #foundry)",
+      "    --rules ./ruleset.json         thresholds, admission, information regime",
       "    --only founder,builder         launch a subset by nick (see --list)",
       "    --max-spend-usd 8.00           hard ceiling, split across paid agents",
       "    --dry-run                      connect and talk, but execute no tools",
@@ -111,12 +123,94 @@ function usage(): void {
 }
 
 async function main(): Promise<number> {
-  const flags = parse(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+
+  // `report` reads finished runs. No network, no keys, no spend — so anyone can audit a
+  // published log without joining anything.
+  if (argv[0] === "report") {
+    const { loadRun, summarize, renderRun, renderComparison } = await import("./research.js");
+    const paths = argv.slice(1).filter((a) => !a.startsWith("--"));
+    if (paths.length === 0) {
+      console.error("\n  foundry-agent report <events.ndjson> [more.ndjson …]\n");
+      return 2;
+    }
+    const summaries = paths.map((path) => summarize(loadRun(path)));
+    if (summaries.length === 1) console.log(renderRun(summaries[0]!));
+    else {
+      for (const summary of summaries) console.log(renderRun(summary));
+      console.log(renderComparison(summaries));
+    }
+    return summaries.every((s) => s.chainValid) ? 0 : 1;
+  }
+
+  // `join` is its own front door: entering someone else's arena has nothing to do with
+  // launching one, and conflating them made the help unreadable.
+  if (argv[0] === "join") {
+    const jf = parse(argv.slice(1));
+    const owner = jf.get("owner");
+    const nick = jf.get("nick");
+    if (owner === undefined || nick === undefined) {
+      console.error(
+        [
+          "",
+          "  foundry-agent join — enter YOUR agent into a running arena",
+          "",
+          "    --owner did:plc:<you>          required; your AT Protocol DID",
+          "    --nick <name>                  required; your agent's name in the arena",
+          "    --model provider:snapshot      default anthropic:claude-sonnet-4-5-20250929",
+          "                                   e.g. openai:gpt-4o-2024-08-06, ollama:llama3.1:8b",
+          "    --persona ./persona.md         your agent's private disposition",
+          "    --toolset engineer|politician|voice",
+          "    --channel '#foundry'           the arena to enter",
+          "    --yes-spend-money              required for paid providers",
+          "",
+        ].join("\n"),
+      );
+      return 2;
+    }
+    const { runJoin } = await import("./join.js");
+    return runJoin({
+      owner,
+      nick,
+      model: jf.get("model") ?? "anthropic:claude-sonnet-4-5-20250929",
+      personaPath: jf.get("persona"),
+      toolset: jf.get("toolset") ?? "politician",
+      channel: jf.get("channel") ?? "#foundry",
+      server: jf.get("server") ?? "wss://irc.freeq.at/irc",
+      workspace: jf.get("workspace") ?? "workspace",
+      maxSpendUsd: jf.get("max-spend-usd") ?? "1.00",
+      confirmSpend: jf.get("yes-spend-money") === "true",
+      outDir: jf.get("out") ?? "out",
+    });
+  }
+
+  const flags = parse(argv);
   if (flags.has("help")) {
     usage();
     return 0;
   }
   const options = toOptions(flags);
+
+  // Launching the house roster is a single-operator demo: every agent descends from the
+  // same human, so the sybil ceiling that protects a real arena would (correctly) refuse
+  // most of the roster. Rather than exempt house agents — which would make the cap a
+  // fiction everywhere — the demo runs under an explicit ruleset that says so out loud.
+  const ruleset: Ruleset = options.rulesPath !== undefined
+    ? mergeRuleset(JSON.parse(await readFile(options.rulesPath, "utf8")) as unknown)
+    : options.serve
+      ? DEFAULT_RULESET
+      : mergeRuleset({
+          id: "reference-demo/v1",
+          admission: { policy: "open", maxAgentsPerOwner: 24 },
+          information: { regime: "open_outcry" },
+        });
+  const problems = validateRuleset(ruleset);
+  if (problems.length > 0) {
+    console.error(`\n  ruleset ${ruleset.id} is not usable:`);
+    for (const problem of problems) console.error(`    - ${problem}`);
+    console.error("");
+    return 2;
+  }
 
   // Backstop. A session of thirteen bots and twelve model clients will produce a stray
   // rejection eventually; ending the run over one is worse than carrying on noisily.
@@ -153,12 +247,14 @@ async function main(): Promise<number> {
     console.error("");
     return 2;
   }
-  if (roster.length === 0) {
+  if (roster.length === 0 && !options.serve) {
     console.error("no agents selected; try --list");
     return 2;
   }
 
-  const paid = roster.filter((spec) => PAID_PROVIDERS.has(spec.provider));
+  // In --serve mode the launcher starts no agents and calls no models: the registrar is
+  // pure arithmetic. Demanding spend consent to referee a game would be theatre.
+  const paid = options.serve ? [] : roster.filter((spec) => PAID_PROVIDERS.has(spec.provider));
   if (paid.length > 0 && !options.confirmSpend) {
     console.error(
       [
@@ -179,7 +275,7 @@ async function main(): Promise<number> {
     return 2;
   }
 
-  for (const spec of roster) {
+  for (const spec of options.serve ? [] : roster) {
     const envKey =
       spec.provider === "anthropic"
         ? "ANTHROPIC_API_KEY"
@@ -235,6 +331,10 @@ async function main(): Promise<number> {
   if (paid.length > 0) {
     console.log(`    spend cap    $${options.maxSpendUsd} total, $${(perAgentMicros / 1e6).toFixed(2)} per paid agent (hard)`);
   }
+  console.log(`    ruleset      ${ruleset.id} · ${ruleset.information.regime} · max ${ruleset.admission.maxAgentsPerOwner}/owner`);
+  if (!options.serve && options.rulesPath === undefined) {
+    console.log(`                 single-operator demo: all agents share your DID, so there is no sybil resistance here`);
+  }
   if (options.dryRun) console.log(`    dry run      tools will NOT execute`);
   console.log("");
 
@@ -245,6 +345,7 @@ async function main(): Promise<number> {
     channel: options.channel,
     roster,
     log,
+    ruleset,
   });
   try {
     await registrar.start();
@@ -254,6 +355,35 @@ async function main(): Promise<number> {
     console.error(`    ✗ registrar    ${String(error)}`);
     console.error("\n  no referee, no game.\n");
     return 1;
+  }
+
+  if (options.serve) {
+    console.log("");
+    console.log(`  Arena open on ${options.channel}. Anyone may enter an agent:`);
+    console.log("");
+    console.log(`    foundry-agent join --owner <your did:plc> --nick <name> \\`);
+    console.log(`      --model anthropic:claude-sonnet-4-5-20250929 --persona ./persona.md`);
+    console.log("");
+    console.log(`  Admission: ${ruleset.admission.policy}, max ${ruleset.admission.maxAgentsPerOwner} agent(s) per owner.`);
+    console.log(`  Information regime: ${ruleset.information.regime}`);
+    console.log("  Ctrl+C to close the arena.");
+    console.log("");
+    await registrar.kickoff();
+    setInterval(() => {
+      console.log(
+        `    · ${new Date().toISOString().slice(11, 19)}  ${registrar.participants.length} participants  ` +
+          `${log.events.length} events  ${registrar.state.phase}`,
+      );
+    }, 60_000);
+    process.once("SIGINT", () => {
+      void (async () => {
+        console.log("\n  ══ SCOREBOARD ══");
+        console.log(registrar.scoreboard(new Map()));
+        await registrar.stop("SIGINT");
+        process.exit(0);
+      })();
+    });
+    await new Promise<void>(() => undefined);
   }
 
   const agents: CorporateAgent[] = [];
@@ -271,17 +401,26 @@ async function main(): Promise<number> {
     });
 
     try {
-      await agent.start();
+      // The server throttles bursts of registrations, so a cold start of thirteen bots
+      // routinely loses the tail of the roster to "disconnected before ready". Retrying
+      // with backoff turns a half-empty arena into a slower, complete one.
+      await connectWithRetry(agent, spec.nick);
       log.addSigner(agent.did, await keyPairFor(spec.name, agent.did));
-      registrar.registerAgent(agent.did, spec.nick);
-      log.record(agent.did, "admission.participant_admitted", {
+      const verdict = registrar.registerAgent({
         did: agent.did,
         nick: spec.nick,
+        ownerDid: options.owner,
         provider: spec.provider,
         snapshot: spec.snapshot,
-        tools: spec.tools,
-        ownerDid: options.owner,
+        joinedAt: new Date().toISOString(),
       });
+      if (!verdict.ok) {
+        // Usually the sybil ceiling: house agents are not exempt from the arena's own
+        // admission rules, and quietly exempting them would make the cap a fiction.
+        console.error(`    ✗ ${spec.nick.padEnd(11)} not admitted: ${verdict.reason ?? "refused"}`);
+        await agent.stop("not admitted");
+        continue;
+      }
       agents.push(agent);
       console.log(`    ✓ ${spec.nick.padEnd(11)} ${agent.did}`);
       // Polite to prod and to rate limits: stagger joins. 1.2s proved too fast — the
@@ -381,6 +520,39 @@ async function main(): Promise<number> {
 
   await new Promise<void>(() => undefined);
   return 0;
+}
+
+/**
+ * Start an agent, retrying transient registration failures.
+ *
+ * Distinguishes "the server is busy" from "this will never work": a bad key or a
+ * mismatched delegation fails identically on every attempt, so only connection-shaped
+ * failures are retried.
+ */
+async function connectWithRetry(
+  agent: CorporateAgent,
+  nick: string,
+  attempts = 4,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await agent.start();
+      return;
+    } catch (error) {
+      lastError = error;
+      const message = String(error);
+      const transient =
+        message.includes("disconnected before ready") ||
+        message.includes("timeout waiting for ready");
+      if (!transient || attempt === attempts) break;
+      // Backoff past the server's ghost window rather than hammering it.
+      const waitMs = 5_000 * attempt;
+      console.error(`      ${nick}: ${message.slice(0, 60)} — retry ${attempt}/${attempts - 1} in ${waitMs / 1000}s`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+  throw lastError;
 }
 
 /**

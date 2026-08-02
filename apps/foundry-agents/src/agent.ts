@@ -37,6 +37,7 @@ import { NodeSubprocessSandbox } from "@freeq-foundry/sandbox";
 import { describeTools, runTool, type ToolContext, type ToolResult } from "./tools.js";
 import { manifestFor, type AgentSpec } from "./roster.js";
 import { GAME_BRIEF } from "./personas.js";
+import { DEFAULT_RULESET, type Ruleset } from "./ruleset.js";
 import { geminiAdapter } from "./gemini.js";
 import type { FoundryLog } from "./log.js";
 
@@ -51,11 +52,20 @@ export interface AgentOptions {
   /** Hard ceiling on this agent's own spend, in micro-USD. */
   readonly maxSpendMicros: number;
   readonly dryRun?: boolean;
+  readonly ruleset?: Ruleset;
 }
 
 interface Turn {
   readonly trigger: string;
   readonly speaker: string;
+}
+
+/** A peer in the arena, as published by the registrar. */
+interface PeerInfo {
+  readonly nick: string;
+  readonly did: string;
+  readonly provider?: string;
+  readonly snapshot?: string;
 }
 
 export class CorporateAgent {
@@ -84,12 +94,17 @@ export class CorporateAgent {
   #linkUp = true;
   /** Last `foundry_state` broadcast, verbatim — the agent's picture of the company. */
   #corpState: Record<string, unknown> = {};
-  /** nick -> DID, published by the registrar at kickoff. */
+  /** nick -> DID, published by the registrar. */
   #directory: Record<string, string> = {};
+  /** Everyone currently admitted — including agents other people entered. */
+  #participants: PeerInfo[] = [];
+
+  readonly #ruleset: Ruleset;
 
   constructor(options: AgentOptions) {
     this.spec = options.spec;
     this.#options = options;
+    this.#ruleset = options.ruleset ?? DEFAULT_RULESET;
     this.#router = new ModelRouter({
       targets: [{ adapter: adapterFor(options.spec), pricing: pricingFor(options.spec.provider) }],
       // A ceiling the agent cannot talk its way past (§6.7).
@@ -160,6 +175,8 @@ export class CorporateAgent {
           if (directory !== null && typeof directory === "object") {
             this.#directory = directory as Record<string, string>;
           }
+          const roster = payload["participants"];
+          if (Array.isArray(roster)) this.#participants = roster as PeerInfo[];
           // Stagger: twelve agents waking in the same second is a rate-limit storm and,
           // worse, a wall of simultaneous speeches no human can follow.
           const jitterMs = Math.floor(Math.random() * 12_000);
@@ -178,6 +195,16 @@ export class CorporateAgent {
         case "foundry_state":
           this.#corpState = payload;
           break;
+
+        case "foundry_directory": {
+          const directory = payload["directory"];
+          if (directory !== null && typeof directory === "object") {
+            this.#directory = directory as Record<string, string>;
+          }
+          const participants = payload["participants"];
+          if (Array.isArray(participants)) this.#participants = participants as PeerInfo[];
+          break;
+        }
 
         case "foundry_grant": {
           if (payload["toDid"] !== this.did) break;
@@ -283,6 +310,25 @@ export class CorporateAgent {
     }
   }
 
+  /**
+   * Ask the arena's registrar for admission.
+   *
+   * Nothing is assumed: the registrar may refuse on the sybil ceiling, a taken nick, or
+   * an allowlist. Joining a channel is not joining a company (§6.5).
+   */
+  announceJoin(ownerDid: string): void {
+    const bot = this.#bot;
+    if (bot === undefined) return;
+    bot.client.emitEvent(this.#options.channel, "foundry_join", {
+      did: this.did,
+      nick: this.spec.nick,
+      ownerDid,
+      provider: this.spec.provider,
+      snapshot: this.spec.snapshot,
+      tools: this.spec.tools,
+    }, { humanText: `🎟 @${this.spec.nick} requests admission` });
+  }
+
   /** True when the agent is between turns and could act. */
   get idle(): boolean {
     return !this.#busy && this.#pending.length === 0;
@@ -335,9 +381,29 @@ export class CorporateAgent {
         return;
       }
 
-      // Speak first. A human watching wants the reasoning before the mechanics.
+      // Where the reasoning goes is a rule of the arena, not a style choice.
+      //
+      // This is a co-opetitive game: participants share the payoff from the company
+      // succeeding and compete for equity, offices, and pay. An agent that narrates its
+      // reasoning every turn has published its reservation price. Under a private
+      // regime the reasoning is still signed and recorded — the researcher reads it
+      // afterwards, rivals never do — and only deliberate `post` actions are spoken.
       if (decision.reasoning.trim() !== "") {
-        await bot.client.sendMessage(this.#options.channel, trimLine(decision.reasoning));
+        if (this.#ruleset.information.regime === "open_outcry") {
+          await bot.client.sendMessage(
+            this.#options.channel,
+            trimLine(decision.reasoning, this.#ruleset.information.maxPublicChars),
+          );
+        } else {
+          this.#options.log.record(
+            this.did,
+            "agent.reasoning",
+            { reasoning: decision.reasoning },
+            // §33's post-run reveal is the exact shape this needs: invisible to rivals
+            // while the game is live, readable by the researcher once it is over.
+            { type: "post_run_reveal", revealPolicyId: "reasoning/after-run" },
+          );
+        }
       }
 
       for (const action of decision.actions.slice(0, 4)) {
@@ -448,7 +514,10 @@ export class CorporateAgent {
 
     switch (effect.kind) {
       case "post":
-        await bot.client.sendMessage(this.#options.channel, trimLine(String(effect.detail["text"] ?? "")));
+        await bot.client.sendMessage(
+          this.#options.channel,
+          trimLine(String(effect.detail["text"] ?? ""), this.#ruleset.information.maxPublicChars),
+        );
         break;
 
       case "propose": {
@@ -627,7 +696,7 @@ function adapterFor(spec: AgentSpec): ModelAdapter {
 }
 
 /** One line, short enough to be spoken. */
-function trimLine(text: string): string {
+function trimLine(text: string, max = 300): string {
   const single = text.replace(/\s+/g, " ").trim();
-  return single.length <= 300 ? single : `${single.slice(0, 297)}…`;
+  return single.length <= max ? single : `${single.slice(0, max - 1)}…`;
 }

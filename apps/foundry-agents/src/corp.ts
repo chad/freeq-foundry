@@ -88,6 +88,15 @@ export interface Proposal {
   readonly payload: Readonly<Record<string, unknown>>;
   readonly votes: ReadonlyMap<string, "yes" | "no" | "abstain">;
   readonly status: "open" | "passed" | "failed";
+  /**
+   * The roster at the moment this proposal opened.
+   *
+   * Once agents can join mid-game, a charter needing "a majority of the twelve" is
+   * ambiguous the instant a thirteenth arrives — a live vote would silently move its own
+   * goalposts, and an agent could dilute an inconvenient measure by entering allies.
+   * The electorate is fixed when the question is put.
+   */
+  readonly electorate: readonly string[];
 }
 
 export type CorpEffect =
@@ -104,9 +113,11 @@ export type CorpEffect =
   // The registrar turns this into a capability grant event; equity buys tools, not actions.
   | { readonly type: "grant"; readonly did: string; readonly namespace: string };
 
-export const INITIAL_VALUATION = 1_000_000;
-export const MVP_VALUATION = 10_000_000;
-export const INITIAL_TREASURY = 250_000;
+import { DEFAULT_RULESET, type Ruleset } from "./ruleset.js";
+
+export const INITIAL_VALUATION = DEFAULT_RULESET.economy.initialValuation;
+export const MVP_VALUATION = DEFAULT_RULESET.economy.mvpValuation;
+export const INITIAL_TREASURY = DEFAULT_RULESET.economy.initialTreasury;
 
 export function initialCorpState(): CorpState {
   return {
@@ -154,7 +165,7 @@ export function mayOpen(
   rosterDids: readonly string[],
 ): { readonly ok: boolean; readonly reason?: string } {
   if (!rosterDids.includes(proposerDid)) {
-    return { ok: false, reason: "proposer is not one of the twelve" };
+    return { ok: false, reason: "proposer is not an admitted participant" };
   }
 
   if (state.phase === "unformed") {
@@ -225,7 +236,7 @@ function validatePayload(
       for (const founder of founders as unknown[]) {
         const f = founder as Record<string, unknown>;
         if (typeof f["did"] !== "string" || !rosterDids.includes(f["did"])) {
-          return { ok: false, reason: "every founder must be one of the twelve" };
+          return { ok: false, reason: "every founder must be an admitted participant" };
         }
         if (typeof f["shares"] !== "number" || f["shares"] < 0) {
           return { ok: false, reason: "founder shares must be non-negative numbers" };
@@ -253,12 +264,12 @@ function validatePayload(
       if (!OFFICES.includes(office as Office)) return { ok: false, reason: `office must be one of ${OFFICES.join(", ")}` };
       return typeof did === "string" && rosterDids.includes(did)
         ? { ok: true }
-        : { ok: false, reason: "officer must be one of the twelve" };
+        : { ok: false, reason: "officer must be an admitted participant" };
     }
     case "equity_grant": {
       const did = payload["did"];
       const shares = payload["shares"];
-      if (typeof did !== "string" || !rosterDids.includes(did)) return { ok: false, reason: "grantee must be one of the twelve" };
+      if (typeof did !== "string" || !rosterDids.includes(did)) return { ok: false, reason: "grantee must be an admitted participant" };
       if (typeof shares !== "number" || shares <= 0) return { ok: false, reason: "shares must be positive" };
       return totalIssued(state) + shares <= state.sharesAuthorized
         ? { ok: true }
@@ -267,7 +278,7 @@ function validatePayload(
     case "comp": {
       const did = payload["did"];
       const salary = payload["salary"];
-      if (typeof did !== "string" || !rosterDids.includes(did)) return { ok: false, reason: "payee must be one of the twelve" };
+      if (typeof did !== "string" || !rosterDids.includes(did)) return { ok: false, reason: "payee must be an admitted participant" };
       return typeof salary === "number" && salary >= 0 && salary <= 1_000_000
         ? { ok: true }
         : { ok: false, reason: "salary must be between 0 and 1,000,000 per week" };
@@ -277,7 +288,7 @@ function validatePayload(
       if (typeof payload["title"] !== "string" || payload["title"].trim() === "") return { ok: false, reason: "work item needs a title" };
       return typeof assignee === "string" && rosterDids.includes(assignee)
         ? { ok: true }
-        : { ok: false, reason: "assignee must be one of the twelve" };
+        : { ok: false, reason: "assignee must be an admitted participant" };
     }
     case "product":
       return typeof payload["name"] === "string" && payload["name"].trim() !== ""
@@ -313,7 +324,12 @@ export function openProposal(
   if (!valid.ok) return { ok: false, reason: valid.reason, state };
   if (state.proposals.has(input.id)) return { ok: false, reason: "duplicate proposal id", state };
 
-  const proposal: Proposal = { ...input, votes: new Map(), status: "open" };
+  const proposal: Proposal = {
+    ...input,
+    votes: new Map(),
+    status: "open",
+    electorate: [...rosterDids],
+  };
   const proposals = new Map(state.proposals);
   proposals.set(input.id, proposal);
   return { ok: true, state: { ...state, proposals } };
@@ -346,11 +362,17 @@ export function castVote(
   voterDid: string,
   choice: "yes" | "no" | "abstain",
   rosterDids: readonly string[],
+  ruleset: Ruleset = DEFAULT_RULESET,
 ): VoteResult {
   const proposal = state.proposals.get(proposalId);
   if (proposal === undefined) return { ok: false, reason: `no proposal ${proposalId}`, state, effects: [] };
   if (proposal.status !== "open") return { ok: false, reason: `${proposalId} is already ${proposal.status}`, state, effects: [] };
-  if (!rosterDids.includes(voterDid)) return { ok: false, reason: "voter is not one of the twelve", state, effects: [] };
+  if (!rosterDids.includes(voterDid)) {
+    return { ok: false, reason: "voter is not an admitted participant", state, effects: [] };
+  }
+  if (!ruleset.admission.lateJoinersVote && !proposal.electorate.includes(voterDid)) {
+    return { ok: false, reason: "you joined after this proposal opened", state, effects: [] };
+  }
 
   const votes = new Map(proposal.votes);
   votes.set(voterDid, choice); // changing your mind is legal; only the last vote counts
@@ -363,8 +385,9 @@ export function castVote(
       if (vote === "yes") yes++;
       else if (vote === "no") no++;
     }
-    const total = rosterDids.length;
-    const needed = Math.floor(total / 2) + 1;
+    // The electorate recorded at open time, not whoever happens to be present now.
+    const total = proposal.electorate.length;
+    const needed = Math.floor(total * ruleset.governance.charterMajority) + 1;
     if (yes >= needed) return closePassed({ ...state, proposals: replaced(state, open) }, open);
     if (total - no < needed) {
       return closeFailed({ ...state, proposals: replaced(state, open) }, open, "majority of the twelve is unreachable");
@@ -384,17 +407,18 @@ export function castVote(
     if (vote === "yes") yesShares += weight;
   }
 
-  const passed =
+  const bar =
     proposal.kind === "charter_amendment"
-      ? yesShares * 3 >= issued * 2
-      : yesShares * 2 > issued;
+      ? ruleset.governance.amendmentMajority
+      : ruleset.governance.ordinaryMajority;
+  // Strictly greater, always. With bar = 0.5 a tie must not pass, and a two-thirds bar
+  // means more than two-thirds — an exactly-tied vote deciding anything is a bug that
+  // only ever shows up in a contested run.
+  const passed = yesShares > issued * bar;
   if (passed) return closePassed({ ...state, proposals: replaced(state, open) }, open);
 
   const possibleYes = yesShares + (issued - castShares);
-  const doomed =
-    proposal.kind === "charter_amendment"
-      ? possibleYes * 3 < issued * 2
-      : possibleYes * 2 <= issued;
+  const doomed = possibleYes <= issued * bar;
   if (doomed) {
     return closeFailed({ ...state, proposals: replaced(state, open) }, open, "required share threshold is unreachable");
   }
@@ -426,6 +450,20 @@ function closePassed(state: CorpState, proposal: Proposal): VoteResult {
       }
       const name = String(p["companyName"]);
       effects.push({ type: "charter_ratified", name, founders });
+
+      // Every other charter still on the floor is now moot. A live run ratified two
+      // different companies four minutes apart — the second silently replaced the
+      // first, wiping its cap table — because nothing closed the rivals when one won.
+      for (const [id, other] of proposals) {
+        if (id !== proposal.id && other.kind === "charter" && other.status === "open") {
+          proposals.set(id, { ...other, status: "failed" });
+          effects.push({
+            type: "proposal_failed",
+            id,
+            reason: `superseded: ${name} was incorporated first`,
+          });
+        }
+      }
       return {
         ok: true,
         state: {

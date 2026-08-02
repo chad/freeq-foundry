@@ -1,0 +1,6 @@
+{
+  "id": "reference-demo/v1",
+  "description": "Single-operator demo: all twelve reference agents belong to one human, so there is NO sybil resistance in this configuration. Use open-arena.json for anything with more than one participant.",
+  "admission": { "policy": "open", "maxAgentsPerOwner": 24 },
+  "information": { "regime": "open_outcry" }
+}
