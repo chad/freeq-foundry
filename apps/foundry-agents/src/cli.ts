@@ -346,6 +346,7 @@ async function main(): Promise<number> {
     roster,
     log,
     ruleset,
+    workspace: options.workspace,
   });
   try {
     await registrar.start();
@@ -413,6 +414,7 @@ async function main(): Promise<number> {
         provider: spec.provider,
         snapshot: spec.snapshot,
         joinedAt: new Date().toISOString(),
+        tools: [...spec.tools],
       });
       if (!verdict.ok) {
         // Usually the sybil ceiling: house agents are not exempt from the arena's own
@@ -500,6 +502,21 @@ async function main(): Promise<number> {
   setInterval(() => {
     const idle = agents.filter((agent) => agent.idle);
     if (idle.length === 0) return;
+
+    // An agent holding an open work item is the only one who can move the company to a
+    // shipped product, so it gets the nudge ahead of anyone with an opinion.
+    const open = [...registrar.state.workItems.values()].filter((w) => w.status === "open");
+    const owed = idle.find((agent) => open.some((w) => w.assigneeDid === agent.did));
+    if (owed !== undefined) {
+      const item = open.find((w) => w.assigneeDid === owed.did);
+      owed.nudge(
+        `You still owe work item ${item?.id ?? "?"}: "${item?.title ?? ""}". Nobody else can ` +
+          `deliver it. This turn: write_file a complete module under src/, run_tests, then ` +
+          `submit_work with workId ${item?.id ?? "?"}. The company is worth 10x the moment it lands.`,
+      );
+      return;
+    }
+
     const agent = idle[nudgeIndex % idle.length];
     nudgeIndex++;
     agent?.nudge(
@@ -507,7 +524,7 @@ async function main(): Promise<number> {
         "proposal, chase whoever owes work, or make your case for what you want. If you " +
         "genuinely have nothing to add, post one short line saying what you are waiting on.",
     );
-  }, 45_000);
+  }, ruleset.tempo.nudgeIntervalSecs * 1000);
 
   // Sockets die; the session should not. Reconnect any agent whose link dropped, so a
   // network blip costs one agent a few turns instead of ending the company.

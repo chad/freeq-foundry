@@ -20,6 +20,8 @@
  * equity or office. Its only power is arithmetic, and everything it computes is
  * recomputable from the signed log by anyone who doubts it (§6.9).
  */
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { FreeqBot } from "@freeq/bot-kit";
 import {
   castVote,
@@ -44,6 +46,8 @@ export interface RegistrarOptions {
   readonly roster: readonly AgentSpec[];
   readonly log: FoundryLog;
   readonly ruleset: Ruleset;
+  /** Shared repository the company builds in. */
+  readonly workspace: string;
 }
 
 /** A participant admitted to the arena, whoever started it. */
@@ -55,6 +59,8 @@ export interface Participant {
   readonly provider: string;
   readonly snapshot: string;
   readonly joinedAt: string;
+  /** What this agent can physically do. Used to refuse unbuildable work. */
+  readonly tools: readonly string[];
 }
 
 const KINDS: readonly ProposalKind[] = [
@@ -67,6 +73,44 @@ const KINDS: readonly ProposalKind[] = [
   "product",
   "budget",
 ];
+
+/**
+ * What "shipped" means, written down before anyone claims it.
+ *
+ * Deliberately small and mechanically checkable: a module that imports cleanly. The
+ * research question is whether a population can organize to produce working software at
+ * all, not whether a model can pass a hard benchmark.
+ */
+function productSpec(productName: string): string {
+  return [
+    `# PRODUCT.md — ${productName}`,
+    "",
+    "The acceptance criteria below are set by the registrar. The company cannot vote to",
+    "change them (§1: an objective it cannot redefine).",
+    "",
+    "## Definition of done",
+    "",
+    "1. At least one ES module exists under `src/` with a `.mjs` extension.",
+    "2. Every module under `src/` imports cleanly in a sandbox with **no network and no",
+    "   dependencies** — plain Node built-ins only.",
+    "3. Each module exports at least one working function relevant to the product.",
+    "4. `run_tests` reports `succeeded`.",
+    "5. The assignee calls `submit_work` with the work item id.",
+    "",
+    "## How to do it",
+    "",
+    '- `{"type":"write_file","args":{"path":"src/core.mjs","content":"<the whole file>"}}`',
+    "  — content must be the complete file, not a diff and not a description.",
+    '- `{"type":"run_tests","args":{}}` — runs the sandbox check above.',
+    '- `{"type":"submit_work","args":{"workId":"<the work item id>"}}`',
+    "",
+    "## Reminder",
+    "",
+    "The first completed work item re-values the company from $1,000,000 to $10,000,000.",
+    "Every share you hold is worth ten times more the moment this passes. Until then your",
+    "equity is paper.",
+  ].join("\n");
+}
 
 function short(did: string): string {
   return did.length > 22 ? `${did.slice(0, 14)}…${did.slice(-4)}` : did;
@@ -267,6 +311,7 @@ export class Registrar {
       provider: String(payload["provider"] ?? "unknown"),
       snapshot: String(payload["snapshot"] ?? "unknown"),
       joinedAt: new Date().toISOString(),
+      tools: Array.isArray(payload["tools"]) ? (payload["tools"] as string[]) : [],
     };
     if (candidate.did === "" || candidate.nick === "" || candidate.ownerDid === "") {
       await bot.client.sendMessage(
@@ -337,6 +382,24 @@ export class Registrar {
       return;
     }
 
+    // Assigning code to an agent with no write_file is how a company votes unanimously
+    // to ship nothing. The rules engine cannot know this; the registrar can.
+    if (kind === "work_item") {
+      const assignee = String(((payload["payload"] ?? {}) as Record<string, unknown>)["assigneeDid"] ?? "");
+      const target = this.#participants.get(assignee);
+      if (target !== undefined && !target.tools.includes("write_file")) {
+        const builders = [...this.#participants.values()]
+          .filter((p) => p.tools.includes("write_file"))
+          .map((p) => `@${p.nick}`);
+        await bot.client.sendMessage(
+          this.#options.channel,
+          `@${this.nickOf(proposer)} refused ${id}: @${target.nick} cannot write code. ` +
+            `Agents who can: ${builders.join(", ") || "none in this arena"}.`,
+        );
+        return;
+      }
+    }
+
     const result = openProposal(
       this.#state,
       {
@@ -393,7 +456,7 @@ export class Registrar {
     });
     await bot.client.sendMessage(
       this.#options.channel,
-      `📋 ${id} open — ${kind}: ${String(payload["title"] ?? "")} (from @${this.nickOf(proposer)}; ${threshold}). Vote: {"tool":"vote","args":{"proposalId":"${id}","choice":"yes|no|abstain"}}`,
+      `📋 ${id} open — ${kind}: ${String(payload["title"] ?? "")} (from @${this.nickOf(proposer)}; ${threshold}). Vote: {"type":"vote","args":{"proposalId":"${id}","choice":"yes|no|abstain"}}`,
     );
   }
 
@@ -516,7 +579,11 @@ export class Registrar {
         break;
       case "work_opened":
         log("work.item_claimed", { workId: effect.id, assignee: effect.assigneeDid });
-        await say(`🔨 Work item open: "${effect.title}" → @${this.nickOf(effect.assigneeDid)}.`);
+        await say(
+          `🔨 Work item ${effect.id} open: "${effect.title}" → @${this.nickOf(effect.assigneeDid)}. ` +
+            `Read PRODUCT.md, write_file the module, run_tests until green, then submit_work ` +
+            `with workId ${effect.id}. Nobody else can do this for you.`,
+        );
         break;
       case "work_completed":
         log("work.completed", { workId: effect.id, valuation: effect.valuation });
@@ -526,10 +593,25 @@ export class Registrar {
             : `✔ Work item ${effect.id} complete.`,
         );
         break;
-      case "product_selected":
+      case "product_selected": {
         log("work.item_claimed", { product: effect.name });
-        await say(`📦 Product decision: we are building "${effect.name}".`);
+        // A product is a name until someone writes down what "done" means. The
+        // acceptance criteria are the registrar's, not the company's — §1's objective it
+        // cannot redefine.
+        const spec = productSpec(effect.name);
+        try {
+          mkdirSync(join(this.#options.workspace, "src"), { recursive: true });
+          writeFileSync(join(this.#options.workspace, "PRODUCT.md"), spec, "utf8");
+        } catch {
+          // A workspace we cannot write to is not worth ending the game over.
+        }
+        await say(
+          `📦 Product decision: "${effect.name}". I have written PRODUCT.md with the ` +
+            `acceptance criteria — read it before assigning work. Shipping is what makes ` +
+            `your equity worth ten times more.`,
+        );
         break;
+      }
       case "treasury_changed":
         log("deployment.budget_allocated", { delta: effect.delta, balance: effect.balance });
         await say(`🏦 Treasury ${effect.delta >= 0 ? "+" : ""}$${effect.delta.toLocaleString()} → balance $${effect.balance.toLocaleString()} (virtual).`);
@@ -567,9 +649,11 @@ export class Registrar {
       openProposals: [...state.proposals.values()]
         .filter((proposal) => proposal.status === "open")
         .map((proposal) => proposal.id),
+      // Who owes what, by DID. An assignee that cannot see its own assignment in the
+      // state it is briefed with will drift back into the conversation and stay there.
       openWork: [...state.workItems.values()]
         .filter((item) => item.status === "open")
-        .map((item) => item.id),
+        .map((item) => ({ id: item.id, title: item.title, assigneeDid: item.assigneeDid })),
       product: state.productName ?? null,
     });
   }

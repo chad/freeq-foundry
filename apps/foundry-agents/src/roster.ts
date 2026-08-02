@@ -32,6 +32,9 @@ const ENGINEER_TOOLS: readonly ToolName[] = [
   "propose",
   "vote",
   "post",
+  // Without this an engineer can build the thing and then cannot hand it in: three
+  // agents wrote, tested, and were told "you do not have the tool submit_work".
+  "submit_work",
 ];
 const FULL_TOOLS: readonly ToolName[] = ["read_file", "list_files", "propose", "vote", "post"];
 /** Can speak and vote but cannot open proposals — must work through others. */

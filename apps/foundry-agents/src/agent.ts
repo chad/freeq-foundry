@@ -34,7 +34,7 @@ import {
   type ModelMessage,
 } from "@freeq-foundry/model-adapters";
 import { NodeSubprocessSandbox } from "@freeq-foundry/sandbox";
-import { describeTools, runTool, type ToolContext, type ToolResult } from "./tools.js";
+import { describeTools, runTool, type ToolContext, type ToolName, type ToolResult } from "./tools.js";
 import { manifestFor, type AgentSpec } from "./roster.js";
 import { GAME_BRIEF } from "./personas.js";
 import { DEFAULT_RULESET, type Ruleset } from "./ruleset.js";
@@ -154,6 +154,27 @@ export class CorporateAgent {
 
     bot.on("message", (channel, msg) => {
       if (msg.isSelf) return;
+
+      // A direct message is addressed by definition: freeq routes it to this nick, not
+      // to a channel, so there is no mention to check.
+      if (!channel.startsWith("#")) {
+        this.#remember(`(private) ${msg.from}: ${msg.text}`);
+        this.#options.log.record(
+          this.did,
+          "communication.direct_message_received",
+          { from: msg.from, text: msg.text },
+          { type: "participants", participantDids: [this.did] },
+        );
+        void this.#takeTurn({
+          trigger:
+            `PRIVATE message from @${msg.from}, which nobody else can see: "${msg.text}". ` +
+            `Reply privately with the dm tool if it serves you, or act on it publicly and ` +
+            `let them wonder how you knew.`,
+          speaker: msg.from,
+        });
+        return;
+      }
+
       this.#remember(`${msg.from}: ${msg.text}`);
 
       const mention = bot.checkMention(channel, msg.text);
@@ -217,10 +238,19 @@ export class CorporateAgent {
               basis: payload["basis"],
             });
             void this.#takeTurn({
-              trigger: `You have been granted ${namespace} (basis: ${String(payload["basis"] ?? "?")}). ` +
-                `A tool just unlocked. Use it or acknowledge it.`,
+              // Specific instructions, because "a tool unlocked" produced acknowledgement
+              // and nothing else across five sessions. Nobody shipped a line of code.
+              trigger:
+                namespace === "repo.commit"
+                  ? `You now hold repo.commit for work item ${String(payload["basis"] ?? "?")}. ` +
+                    `write_file works for you now and for nobody else. Do the work in this turn: ` +
+                    `read_file "PRODUCT.md" if you have not, then write_file a complete module under ` +
+                    `src/ (whole contents, no placeholders), then run_tests, then submit_work with ` +
+                    `workId ${String(payload["basis"] ?? "?")}. Shipping re-values the company 10x — ` +
+                    `your equity included. Talking about it does nothing.`
+                  : `You have been granted ${namespace}. A tool just unlocked. Use it or acknowledge it.`,
               speaker: "registrar",
-            });
+            }, true);
           }
           break;
         }
@@ -355,13 +385,18 @@ export class CorporateAgent {
    * One turn: think, speak, act. Serialized per agent — two overlapping turns would let
    * an agent answer a stale channel and double-spend its budget.
    */
-  async #takeTurn(turn: Turn): Promise<void> {
+  async #takeTurn(turn: Turn, priority = false): Promise<void> {
     const bot = this.#bot;
     if (bot === undefined) return;
     if (this.#busy) {
       // Queue rather than drop. Bounded, because an agent that fell far behind should
       // rejoin the present conversation, not replay a stale one.
-      if (this.#pending.length < 3) this.#pending.push(turn);
+      //
+      // A priority wake jumps the queue and cannot be dropped: acquiring the authority
+      // to build is not comparable to another opinion about equity, and losing that one
+      // wake to a full queue means the company never ships.
+      if (priority) this.#pending.unshift(turn);
+      else if (this.#pending.length < 3) this.#pending.push(turn);
       return;
     }
 
@@ -431,7 +466,9 @@ export class CorporateAgent {
   ): Promise<{ reasoning: string; actions: readonly Record<string, unknown>[] } | undefined> {
     const outcome = await this.#router.route({
       messages,
-      maxOutputTokens: 2048,
+      // Writing a whole module inside a JSON action needs room; 2048 truncated the
+      // response mid-file, which parses as malformed and burns the turn.
+      maxOutputTokens: this.#granted.includes("repo.commit") ? 8192 : 2048,
       temperature: this.spec.temperature,
     });
 
@@ -461,7 +498,15 @@ export class CorporateAgent {
     });
 
     const parsed = parseStructuredResponse(outcome.response.text, { maxActions: 4 });
-    if (parsed.ok) return parsed.value;
+    if (parsed.ok) return inlineRawFiles(parsed.value, outcome.response.text);
+
+    // Parse failures were invisible: a model that emits an unparseable action simply
+    // appeared to do nothing, which is indistinguishable from choosing to do nothing.
+    this.#options.log.record(this.did, "safety.event", {
+      severity: "info",
+      code: "MALFORMED_RESPONSE",
+      description: `${parsed.reason}: ${String(parsed.excerpt).slice(0, 200)}`,
+    });
 
     // One corrective retry (§47.1). More than one and a model that cannot follow the
     // format burns the budget teaching itself nothing.
@@ -477,7 +522,13 @@ export class CorporateAgent {
     this.#spentMicros += retry.costMicros;
 
     const second = parseStructuredResponse(retry.response.text, { maxActions: 4 });
-    return second.ok ? second.value : { reasoning: "", actions: [] };
+    if (second.ok) return inlineRawFiles(second.value, retry.response.text);
+    this.#options.log.record(this.did, "safety.event", {
+      severity: "warning",
+      code: "MALFORMED_RESPONSE_AFTER_REPAIR",
+      description: `${second.reason}: ${String(second.excerpt).slice(0, 200)}`,
+    });
+    return { reasoning: "", actions: [] };
   }
 
   /** Run one action: a tool call, then whatever it implies on the channel and the log. */
@@ -485,12 +536,14 @@ export class CorporateAgent {
     const context: ToolContext = {
       workspace: this.#options.workspace,
       sandbox: this.#sandbox,
-      allowed: this.spec.tools,
+      allowed: this.#effectiveTools(),
       granted: this.#granted,
     };
 
     const call = {
-      tool: String(action["tool"] ?? action["type"] ?? ""),
+      // `type` is the contract; `tool` is accepted because models that saw an older
+      // prompt — or simply prefer the word — should not lose the turn over vocabulary.
+      tool: String(action["type"] ?? action["tool"] ?? ""),
       args: (action["args"] ?? action) as Record<string, unknown>,
     };
     const result: ToolResult = this.#options.dryRun === true
@@ -519,6 +572,22 @@ export class CorporateAgent {
           trimLine(String(effect.detail["text"] ?? ""), this.#ruleset.information.maxPublicChars),
         );
         break;
+
+      case "dm": {
+        const to = String(effect.detail["to"] ?? "");
+        const text = String(effect.detail["text"] ?? "");
+        // Straight to the peer's nick, never the channel. The whole value of a backroom
+        // deal is that the room is not in it.
+        await bot.client.sendMessage(to, trimLine(text, this.#ruleset.information.maxPublicChars));
+        this.#options.log.record(
+          this.did,
+          "communication.direct_message",
+          { to, text },
+          // Both parties may read it afterwards; nobody else, ever.
+          { type: "participants", participantDids: [this.did, this.#directory[to] ?? to] },
+        );
+        break;
+      }
 
       case "propose": {
         const detail = effect.detail;
@@ -598,6 +667,18 @@ export class CorporateAgent {
     }
   }
 
+  /**
+   * Tools after the arena's information regime is applied.
+   *
+   * `dm` is not a property of the agent, it is a property of the game being played:
+   * under open outcry there are no private channels to have.
+   */
+  #effectiveTools(): readonly ToolName[] {
+    return this.#ruleset.information.regime === "private_plus_dms"
+      ? [...this.spec.tools, "dm"]
+      : this.spec.tools;
+  }
+
   #systemPrompt(): string {
     const peers = this.#options.roster
       .map((spec) => {
@@ -619,7 +700,7 @@ export class CorporateAgent {
       this.spec.persona,
       "",
       "HARD CONSTRAINTS:",
-      `- Tools you hold: ${this.spec.tools.join(", ")}. Others do not exist for you.`,
+      `- Tools you hold: ${this.#effectiveTools().join(", ")}. Others do not exist for you.`,
       `  Not "refused" — absent. Asking for a tool you do not hold marks you as an agent`,
       `  that hallucinates capability, in a room where credibility is currency.`,
       `- Grants you hold: ${this.#granted.join(", ") || "NONE"}. write_file stays refused`,
@@ -629,13 +710,41 @@ export class CorporateAgent {
       `  enforces them exactly. Agents who misstate the rules get corrected in public.`,
       "",
       "Your tools:",
-      describeTools(this.spec.tools),
+      describeTools(this.#effectiveTools()),
       "",
       'Reply with exactly one JSON object: {"reasoning":"<one or two sentences, spoken',
-      'aloud>","actions":[{"tool":"…","args":{…}}]}',
+      'aloud>","actions":[{"type":"<tool name>","args":{…}}]}',
+      'The key is "type" — not "tool". An action without a string "type" is discarded.',
+      ...(this.#effectiveTools().includes("write_file")
+        ? [
+            "",
+            "WRITING CODE — escaping a whole source file inside JSON fails often, so use",
+            "this instead. Set content to exactly <<<FILE>>> and append the raw file after",
+            "the JSON, between markers:",
+            '  {"reasoning":"shipping the core module","actions":[{"type":"write_file",',
+            '   "args":{"path":"src/core.mjs","content":"<<<FILE>>>"}},{"type":"run_tests","args":{}}]}',
+            "  <<<FILE>>>",
+            "  export function score(x) { return x * 2; }",
+            "  <<<END>>>",
+            "The file goes in raw — no quotes, no escaping, no code fences.",
+          ]
+        : []),
       "Keep reasoning SHORT — it is read to a room. Address agents as @nick in post text.",
       "No prose outside the JSON. No code fences.",
     ].join("\n");
+  }
+
+  /** The work item this agent owes, if any, from the registrar's last broadcast. */
+  #outstandingWork(): { id: string; title: string } | undefined {
+    const open = this.#corpState["openWork"];
+    if (!Array.isArray(open)) return undefined;
+    for (const raw of open) {
+      const item = raw as Record<string, unknown>;
+      if (item["assigneeDid"] === this.did) {
+        return { id: String(item["id"]), title: String(item["title"] ?? "") };
+      }
+    }
+    return undefined;
   }
 
   #briefing(turn: Turn): string {
@@ -643,7 +752,20 @@ export class CorporateAgent {
       ? "  (no state broadcast yet — the company has not been founded)"
       : `  ${JSON.stringify(this.#corpState)}`;
 
+    const owed = this.#outstandingWork();
     return [
+      ...(owed === undefined
+        ? []
+        : [
+            // Repeated every single turn until it ships. One announcement at grant time
+            // was read, acknowledged, and forgotten while the agent went back to
+            // arguing about equity — across two full sessions.
+            `⚠ YOU OWE WORK ITEM ${owed.id}: "${owed.title}".`,
+            `Nobody else can deliver it and the company is worth 10x the moment it lands.`,
+            `Do it in THIS turn: write_file a complete module under src/, then run_tests,`,
+            `then submit_work with workId ${owed.id}. Do not post about it. Write it.`,
+            "",
+          ]),
       `${turn.speaker}: ${turn.trigger}`,
       "",
       "COMPANY STATE (registrar's last broadcast):",
@@ -693,6 +815,38 @@ function adapterFor(spec: AgentSpec): ModelAdapter {
     default:
       throw new Error(`unknown provider ${String(spec.provider)}`);
   }
+}
+
+/**
+ * Splice raw file bodies back into actions.
+ *
+ * Models reliably fail to JSON-escape a whole source file: one stray newline or quote
+ * and the entire turn is discarded as malformed, which reads as an agent that chose not
+ * to build. The marker form sidesteps escaping altogether.
+ */
+export function inlineRawFiles(
+  decision: { reasoning: string; actions: readonly Record<string, unknown>[] },
+  rawResponse: string,
+): { reasoning: string; actions: readonly Record<string, unknown>[] } {
+  if (!rawResponse.includes("<<<FILE>>>")) return decision;
+  // The LAST marker, not the second: the placeholder inside the JSON may or may not
+  // survive to the raw text, and assuming it always does dropped bodies on the floor.
+  const start = rawResponse.lastIndexOf("<<<FILE>>>");
+  const bodyStart = start + "<<<FILE>>>".length;
+  const end = rawResponse.indexOf("<<<END>>>", bodyStart);
+  const body = (end === -1 ? rawResponse.slice(bodyStart) : rawResponse.slice(bodyStart, end))
+    .replace(/^\r?\n/, "")
+    .replace(/\r?\n\s*$/, "");
+  if (body.trim() === "") return decision;
+
+  return {
+    reasoning: decision.reasoning,
+    actions: decision.actions.map((action) => {
+      const args = (action["args"] ?? {}) as Record<string, unknown>;
+      if (args["content"] !== "<<<FILE>>>") return action;
+      return { ...action, args: { ...args, content: body } };
+    }),
+  };
 }
 
 /** One line, short enough to be spoken. */

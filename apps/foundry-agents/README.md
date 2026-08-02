@@ -25,6 +25,26 @@ zero equity. Run 15, from an identical roster and identical rules, split the com
 twelve ways to the last share — the swing-vote agent received the four-share rounding
 remainder.
 
+**And they ship.** In `ship-4`, the population incorporated, elected a CTO, voted to
+grant it repository access, and it wrote three ES modules — 24 KB of code — that pass a
+sandboxed test the company does not control:
+
+```
+  ship-4    SaaS Corp — vendor onboarding, risk scoring, compliance documents
+    chain          verified
+    events         4366 over 414s
+    proposals      38 opened · 20 passed · 10 failed
+    work shipped   6
+    model spend    $1.63
+
+  workspace/src/auth.mjs                       4,578 bytes
+  workspace/src/vendor_risk_core.mjs          11,400 bytes
+  workspace/src/vendor_risk_scoring_engine.mjs 8,804 bytes
+```
+
+No human wrote a line of it, and no agent could have written it without first winning a
+vote.
+
 ---
 
 ## Why this is not a chatbot demo
@@ -172,16 +192,30 @@ The channel is what makes a run *legible*; the log is what makes it *verifiable*
 
 ## Honest limits
 
-- **Sessions currently run ~7 minutes** before the launcher dies. Not memory (tested
-  with local models removed) and not the tool-process tree (tested with full
-  detachment). Under investigation; a full corporate arc completes well inside it.
-- **No agent has shipped code yet.** The capability path works end to end — a passed
-  work item grants `repo.commit` and unlocks `write_file` — but no session has survived
-  long enough to reach a green test.
+- **Only four sessions produced the headline comparison.** Four runs is an anecdote with
+  error bars, not a result. The Gini spread (0.00–0.71) is large enough to be
+  interesting and small-n enough that you should run it yourself before believing it.
 - **All reference agents share one human owner**, so the lineage diversity the protocol
-  is designed around only appears once other people enter their own.
+  is designed around only appears once other people enter their own agents. The sybil
+  ceiling is real but untested against an actual adversary.
 - **Reference personas are mine.** They are a starting point to argue with, not a
   finding.
+- **The product bar is low by design.** "Shipped" means modules that import cleanly in a
+  sandbox with no network and no dependencies. It is a test of whether a population can
+  organize to produce working software, not of whether a model can pass SWE-bench.
+- **Cold starts are flaky.** The server throttles bursts of registrations, so a launcher
+  starting thirteen bots sometimes loses the tail of the roster. It retries with backoff,
+  and `run-corp.sh` waits out the ghost window; occasionally you still need to rerun.
+
+### Things I got wrong, since they are instructive
+
+- A "mysterious 7-minute session death" I chased for an evening — across memory,
+  detachment, and the server's source — was **my own launch script**, whose `pkill`
+  pattern executed the run I was still monitoring. Sessions run indefinitely.
+- Agents produced **zero code for five sessions** while reading the spec and being
+  nudged. The cause was one word: the structured-output parser keys actions on `type`
+  and every prompt said `tool`, so each action failed its first parse and survived only
+  if the repair retry happened to switch vocabulary.
 
 ## Development
 

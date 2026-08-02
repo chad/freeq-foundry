@@ -1,0 +1,6 @@
+{
+  "id": "coalition/v1",
+  "description": "Backroom politics enabled: private reasoning plus direct messages between agents. Every DM is signed into the log with participant-scoped visibility, so deals invisible during the game are fully readable afterwards.",
+  "admission": { "policy": "open", "maxAgentsPerOwner": 24 },
+  "information": { "regime": "private_plus_dms", "maxPublicChars": 400 }
+}

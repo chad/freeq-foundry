@@ -14,13 +14,20 @@ MAX_SPEND="${MAX_SPEND:-8.00}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG="/tmp/${RUN_ID}.log"
 
-echo "→ stopping any running session"
-pkill -TERM -f "cli.js --owner ${OWNER}" 2>/dev/null || true
+# Kill only sessions of THIS arena, and say so. A blanket `pkill -f cli.js` here quietly
+# executed every run I was still monitoring, and I spent an evening diagnosing the
+# resulting "mysterious 7-minute deaths" as a server problem.
+echo "→ stopping running sessions on ${CHANNEL}"
+VICTIMS=$(pgrep -f "cli.js .*--channel ${CHANNEL}" || true)
+if [ -n "$VICTIMS" ]; then
+  echo "  killing: $VICTIMS"
+  kill -TERM $VICTIMS 2>/dev/null || true
+fi
 for _ in $(seq 1 15); do
-  pgrep -f "cli.js --owner ${OWNER}" >/dev/null 2>&1 || break
+  pgrep -f "cli.js .*--channel ${CHANNEL}" >/dev/null 2>&1 || break
   sleep 1
 done
-pkill -KILL -f "cli.js --owner ${OWNER}" 2>/dev/null || true
+pgrep -f "cli.js .*--channel ${CHANNEL}" | xargs -r kill -KILL 2>/dev/null || true
 
 # The server holds a disconnected DID's nick for a ~30s grace window, longer when the
 # QUIT never arrived. Reconnecting inside it is what produces "disconnected before ready".
