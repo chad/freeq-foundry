@@ -809,6 +809,14 @@ export class CorporateAgent {
     ].join("\n");
   }
 
+  /** What this agent has already claimed, from the registrar's last broadcast. */
+  #myExpertise(): readonly string[] {
+    const all = this.#corpState["expertise"];
+    if (all === null || typeof all !== "object") return [];
+    const mine = (all as Record<string, unknown>)[this.did];
+    return Array.isArray(mine) ? mine.map(String) : [];
+  }
+
   /** The work item this agent owes, if any, from the registrar's last broadcast. */
   #outstandingWork(): { id: string; title: string } | undefined {
     const open = this.#corpState["openWork"];
@@ -827,6 +835,13 @@ export class CorporateAgent {
       ? "  (no state broadcast yet — the company has not been founded)"
       : `  ${JSON.stringify(this.#corpState)}`;
 
+    // What this agent has already done, so it stops doing it again. Agents cannot see
+    // their own history any other way: each turn is a fresh call with no memory beyond
+    // what the briefing carries.
+    const open = Array.isArray(this.#corpState["openProposals"])
+      ? (this.#corpState["openProposals"] as unknown[]).map(String)
+      : [];
+    const unvoted = open.filter((id) => !this.#votedOn.has(id));
     const owed = this.#outstandingWork();
     return [
       ...(owed === undefined
@@ -845,6 +860,10 @@ export class CorporateAgent {
       "",
       "COMPANY STATE (registrar's last broadcast):",
       state,
+      "",
+      `Open proposals you have NOT yet voted on: ${unvoted.join(", ") || "none — you are up to date"}.`,
+      `Already voted on: ${[...this.#votedOn].join(", ") || "nothing yet"}. Re-casting the same`,
+      `choice changes nothing and is ignored; vote again only to CHANGE your mind.`,
       "",
       "Recent channel activity, oldest first:",
       ...(this.#recent.length === 0 ? ["  (nothing yet)"] : this.#recent.map((line) => `  ${line}`)),

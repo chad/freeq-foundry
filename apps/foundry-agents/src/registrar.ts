@@ -421,6 +421,16 @@ export class Registrar {
     const raw = payload["expertise"];
     const areas = Array.isArray(raw) ? raw.map((a) => String(a)) : [];
 
+    // Idempotent. A live run recorded 513 declarations because agents re-declared the
+    // same areas up to 74 times each — nothing told them they already had, and the
+    // registrar announced every repeat. That was 9% of the entire event log, plus a
+    // model turn and a channel message per repeat.
+    const existing = this.#state.expertise.get(did);
+    const proposed = [...new Set(areas.map((a) => a.trim().toLowerCase()))].sort();
+    if (existing !== undefined && [...existing].sort().join("|") === proposed.join("|")) {
+      return;
+    }
+
     const result = declareExpertise(
       this.#state,
       did,
@@ -443,7 +453,7 @@ export class Registrar {
     const focus = String(payload["focus"] ?? "").trim();
     await bot.client.sendMessage(
       this.#options.channel,
-      `🎓 @${this.nickOf(did)} declares expertise: ${result.accepted.join(", ")}` +
+      `🎓 @${this.nickOf(did)} ${existing === undefined ? "declares" : "updates"} expertise: ${result.accepted.join(", ")}` +
         `${focus === "" ? "" : ` — ${focus.slice(0, 160)}`}`,
     );
     await this.#broadcastState();
@@ -731,6 +741,13 @@ export class Registrar {
     const raw = String(payload["choice"] ?? "abstain");
     const choice = raw === "yes" || raw === "no" ? raw : "abstain";
 
+    // Re-casting the same choice is a no-op that used to cost a channel line, a log
+    // entry, and a state broadcast. In one run, 217 of 510 agent/proposal pairs voted
+    // more than once and only 65 of those repeats changed anything: roughly 1,300
+    // redundant votes, each one a paid model turn.
+    const already = this.#state.proposals.get(id)?.votes.get(voter);
+    if (already === choice) return;
+
     const result = castVote(this.#state, id, voter, choice, this.#rosterDids(), this.#options.ruleset);
     if (!result.ok) {
       await bot.client.sendMessage(this.#options.channel, `Vote rejected: ${result.reason ?? "invalid"}`);
@@ -750,7 +767,8 @@ export class Registrar {
       const why = String(payload["rationale"] ?? "").replace(/\s+/g, " ").slice(0, 140);
       await bot.client.sendMessage(
         this.#options.channel,
-        `🗳 ${id}: @${this.nickOf(voter)} votes ${choice} (${cast}/${this.#participants.size} voted)${why === "" ? "" : ` — ${why}`}`,
+        `🗳 ${id}: @${this.nickOf(voter)} ${already === undefined ? "votes" : `changes vote to`} ${choice} ` +
+          `(${cast}/${this.#participants.size} voted)${why === "" ? "" : ` — ${why}`}`,
       );
       return;
     }
