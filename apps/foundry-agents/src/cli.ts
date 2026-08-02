@@ -95,7 +95,7 @@ function usage(): void {
   console.log(
     [
       "",
-      "  foundry-agent — twelve agents found a corporation in a live freeq channel",
+      "  foundry-agent — independent founders build a company in a live freeq channel",
       "",
       "  Required:",
       "    --owner did:plc:<your-did>      your AT Protocol DID; all bots are delegated from it",
@@ -109,7 +109,7 @@ function usage(): void {
       "  Common:",
       "    --channel '#foundry'           channel to join (default #foundry)",
       "    --rules ./ruleset.json         thresholds, admission, information regime",
-      "    --only founder,builder         launch a subset by nick (see --list)",
+      "    --only ada,iris,kira           launch a subset by nick (see --list)",
       "    --max-spend-usd 8.00           hard ceiling, split across paid agents",
       "    --dry-run                      connect and talk, but execute no tools",
       "    --list                         print the roster and exit",
@@ -268,7 +268,7 @@ async function main(): Promise<number> {
         "",
         "  Or run only the local agents, which cost nothing:",
         "",
-        `    foundry-agent --owner ${options.owner} --only builder,wildcard`,
+        `    foundry-agent --owner ${options.owner} --only kira,lune`,
         "",
       ].join("\n"),
     );
