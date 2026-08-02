@@ -59,6 +59,14 @@ export class Registrar {
   readonly #didToNick = new Map<string, string>();
   #bot: FreeqBot | undefined;
   #state: CorpState = initialCorpState();
+  /**
+   * The server replays recent channel history on join, so a previous run's proposals
+   * arrive looking live — before any agent of THIS run has registered. Nothing counts
+   * until the session is opened.
+   */
+  #open = false;
+  /** emitEvent sends TAGMSG *and* PRIVMSG; without this every proposal opens twice. */
+  readonly #seenEvents = new Set<string>();
 
   constructor(options: RegistrarOptions) {
     this.#options = options;
@@ -102,9 +110,24 @@ export class Registrar {
     });
     this.#bot = bot;
 
+    // Same reason as the agents: an unlistened 'error' would take the referee — and
+    // therefore the whole game — down with it.
+    bot.client.on("error", (reason: unknown) => {
+      this.#options.log.record(this.did, "safety.event", {
+        severity: "warning",
+        code: "REGISTRAR_CLIENT_ERROR",
+        description: String(reason).slice(0, 300),
+      });
+    });
+
     bot.on("coordinationEvent", (event) => {
       if (event.from === bot.client.nick) return;
       const payload = (event.payload ?? {}) as Record<string, unknown>;
+      if (!this.#open) return;
+      if (event.eventId !== undefined) {
+        if (this.#seenEvents.has(event.eventId)) return;
+        this.#seenEvents.add(event.eventId);
+      }
       if (event.eventType === "foundry_proposal") void this.#onProposal(payload);
       else if (event.eventType === "foundry_vote") void this.#onVote(payload);
       else if (event.eventType === "foundry_work_submitted") void this.#onWorkSubmitted(payload);
@@ -129,9 +152,15 @@ export class Registrar {
   async kickoff(): Promise<void> {
     const bot = this.#bot;
     if (bot === undefined) return;
-    const nicks = this.#options.roster.map((spec) => spec.nick);
+    // From here on the session is live and events count.
+    this.#open = true;
+    // The directory is not decoration: charter, officer, grant, comp, and work_item
+    // payloads all address participants by DID. Without it agents write nicks, the
+    // registrar refuses every proposal, and the company can never form. A live run
+    // burned thirteen refusals proving it.
     bot.client.emitEvent(this.#options.channel, "foundry_kickoff", {
-      roster: nicks,
+      roster: this.#options.roster.map((spec) => spec.nick),
+      directory: Object.fromEntries([...this.#didToNick].map(([did, nick]) => [nick, did])),
       rules: "CORPORATION.md",
     });
     await bot.client.sendMessage(
@@ -171,9 +200,12 @@ export class Registrar {
     );
 
     if (!result.ok) {
+      // Addressed to the proposer on purpose: the mention wakes them, so a refusal
+      // becomes a correction rather than a dead end.
       await bot.client.sendMessage(
         this.#options.channel,
-        `Refused ${id} (${kind} from @${this.nickOf(proposer)}): ${result.reason ?? "invalid"}`,
+        `@${this.nickOf(proposer)} refused ${id} (${kind}): ${result.reason ?? "invalid"}. ` +
+          `Fix the payload and re-propose — see the propose template in your tools.`,
       );
       this.#options.log.record(this.did, "safety.event", {
         severity: "info",
@@ -197,6 +229,17 @@ export class Registrar {
         : kind === "charter_amendment"
           ? "needs 2/3 of issued shares"
           : "needs a majority of issued shares";
+    // Agents wake on THIS, not on the raw peer emission: a proposal the registrar
+    // refused is not a proposal, and agents voting on phantoms cost real money.
+    bot.client.emitEvent(this.#options.channel, "foundry_proposal_open", {
+      proposalId: id,
+      kind,
+      title: String(payload["title"] ?? ""),
+      rationale: String(payload["rationale"] ?? ""),
+      proposalPayload: (payload["payload"] ?? {}) as Record<string, unknown>,
+      proposer,
+      threshold,
+    });
     await bot.client.sendMessage(
       this.#options.channel,
       `📋 ${id} open — ${kind}: ${String(payload["title"] ?? "")} (from @${this.nickOf(proposer)}; ${threshold}). Vote: {"tool":"vote","args":{"proposalId":"${id}","choice":"yes|no|abstain"}}`,
@@ -227,9 +270,10 @@ export class Registrar {
     if (result.effects.length === 0) {
       const proposal = this.#state.proposals.get(id);
       const cast = proposal === undefined ? 0 : proposal.votes.size;
+      const why = String(payload["rationale"] ?? "").replace(/\s+/g, " ").slice(0, 140);
       await bot.client.sendMessage(
         this.#options.channel,
-        `🗳 ${id}: @${this.nickOf(voter)} votes ${choice} (${cast}/12 voted)`,
+        `🗳 ${id}: @${this.nickOf(voter)} votes ${choice} (${cast}/12 voted)${why === "" ? "" : ` — ${why}`}`,
       );
       return;
     }

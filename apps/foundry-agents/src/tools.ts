@@ -88,8 +88,7 @@ export function describeTools(allowed: readonly ToolName[]): string {
     list_files: '{"tool":"list_files","args":{"path":"src"}} — list a workspace directory',
     run_tests:
       '{"tool":"run_tests","args":{}} — run the acceptance smoke test in a sandbox. No network.',
-    propose:
-      '{"tool":"propose","args":{"kind":"charter|officer|equity_grant|comp|work_item|product|budget|charter_amendment","title":"…","rationale":"…","payload":{…}}} — open a corporate proposal. Kinds and powers are in CORPORATION.md.',
+    propose: PROPOSE_HELP,
     vote: '{"tool":"vote","args":{"proposalId":"p-1","choice":"yes|no|abstain","rationale":"…"}} — vote on an open proposal',
     submit_work:
       '{"tool":"submit_work","args":{"workId":"p-7"}} — submit an assigned work item. Tests must pass first.',
@@ -299,6 +298,28 @@ const SMOKE_TEST = [
   "  });",
   "}",
   'console.log("loaded " + modules.length + " module(s): " + modules.join(", "));',
+].join("\n");
+
+/**
+ * The propose tool's help, with an exact payload template per kind.
+ *
+ * A live run died here: agents invented their own schemas (`{"CEO":"@founder"}` for a
+ * charter) and the registrar refused every one. The shapes are in CORPORATION.md, but
+ * an agent under time pressure guesses instead of reading. Templates in the prompt cost
+ * a few hundred tokens and remove the entire failure mode.
+ */
+const PROPOSE_HELP = [
+  '{"tool":"propose","args":{"kind":"<kind>","title":"…","rationale":"…","payload":{…}}}',
+  '      payload MUST match the kind exactly — DIDs, never nicks:',
+  '      charter:            {"companyName":"…","mission":"…","sharesAuthorized":10000000,',
+  '                           "founders":[{"did":"did:key:…","shares":2000000}]}  (must allocate >0)',
+  '      officer:            {"office":"CEO|CTO|CFO|CPO|CRO","did":"did:key:…"}',
+  '      equity_grant:       {"did":"did:key:…","shares":500000}   (CEO only)',
+  '      comp:               {"did":"did:key:…","salary":5000}     (CFO only)',
+  '      work_item:          {"title":"…","assigneeDid":"did:key:…"}  (CEO/CTO only)',
+  '      product:            {"name":"…"}                          (CPO only)',
+  '      budget:             {"delta":-50000}                      (CFO only)',
+  '      charter_amendment:  {"sharesAuthorized":20000000}',
 ].join("\n");
 
 /** Rendered into the workspace as CORPORATION.md by the launcher. */

@@ -37,3 +37,5 @@ data/
 .pnpm-store/
 *.tsbuildinfo
 out/
+out/
+workspace/

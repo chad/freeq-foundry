@@ -163,12 +163,15 @@ export function corporateRoster(): readonly AgentSpec[] {
       temperature: "0.2",
     }),
     spec({
+      // qwen3-coder-next is a 28GB resident model. On a 48GB machine alongside twelve
+      // agents it left ~100MB free and macOS killed the launcher at the six-minute mark,
+      // mid-session, with no error — twice. gpt-oss:20b is 12GB and leaves headroom.
       nick: "builder",
       provider: "ollama",
-      snapshot: "qwen3-coder-next:latest",
+      snapshot: "heretic-gpt-oss:20b",
       persona: "builder",
       tools: ENGINEER_TOOLS,
-      blurb: "local grinder · cheap, willing, loyal early · qwen3-coder (local)",
+      blurb: "local grinder · cheap, willing, loyal early · gpt-oss-20b (local)",
       temperature: "0.3",
     }),
     spec({

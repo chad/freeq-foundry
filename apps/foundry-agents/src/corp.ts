@@ -232,9 +232,14 @@ function validatePayload(
         }
         allocated += f["shares"];
       }
-      return allocated <= total
+      if (allocated > total) {
+        return { ok: false, reason: `founders allocated ${allocated} but only ${total} authorized` };
+      }
+      // A charter that issues nothing incorporates a company in which every later vote
+      // is weighted by zero shares — permanently undecidable. Refuse it at the door.
+      return allocated > 0
         ? { ok: true }
-        : { ok: false, reason: `founders allocated ${allocated} but only ${total} authorized` };
+        : { ok: false, reason: "a charter must allocate shares to at least one founder" };
     }
     case "charter_amendment": {
       const total = payload["sharesAuthorized"];

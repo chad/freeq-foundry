@@ -65,13 +65,27 @@ export class CorporateAgent {
   readonly #sandbox = new NodeSubprocessSandbox();
   readonly #recent: string[] = [];
   readonly #votedOn = new Set<string>();
+  /**
+   * Wakes that arrived while the agent was mid-turn.
+   *
+   * Dropping them silently cost a live run its charter: three proposals arrived in a
+   * burst, most agents were busy, and only five of twelve ever voted — so a vote
+   * needing seven could not pass for reasons no observer could see.
+   */
+  readonly #pending: Turn[] = [];
+  /** emitEvent sends TAGMSG *and* PRIVMSG, so every event arrives twice. */
+  readonly #seenEvents = new Set<string>();
   #bot: FreeqBot | undefined;
   #granted: string[] = [];
   #spentMicros = 0;
   #busy = false;
   #lastTestsPassed = false;
+  /** Link state, tracked from the SDK's connected/disconnected events. */
+  #linkUp = true;
   /** Last `foundry_state` broadcast, verbatim — the agent's picture of the company. */
   #corpState: Record<string, unknown> = {};
+  /** nick -> DID, published by the registrar at kickoff. */
+  #directory: Record<string, string> = {};
 
   constructor(options: AgentOptions) {
     this.spec = options.spec;
@@ -105,6 +119,24 @@ export class CorporateAgent {
     });
     this.#bot = bot;
 
+    // An 'error' event with no listener is an uncaught throw in Node, and the SDK emits
+    // one on socket trouble. A live run died silently at three minutes this way: one bad
+    // socket took all twelve agents down. Partial failure must stay partial (§47.3).
+    bot.client.on("disconnected", () => {
+      this.#linkUp = false;
+    });
+    bot.client.on("connected", () => {
+      this.#linkUp = true;
+    });
+
+    bot.client.on("error", (reason: unknown) => {
+      this.#options.log.record(this.did, "safety.event", {
+        severity: "warning",
+        code: "CLIENT_ERROR",
+        description: String(reason).slice(0, 300),
+      });
+    });
+
     bot.on("message", (channel, msg) => {
       if (msg.isSelf) return;
       this.#remember(`${msg.from}: ${msg.text}`);
@@ -116,10 +148,18 @@ export class CorporateAgent {
 
     bot.on("coordinationEvent", (event) => {
       if (event.from === bot.client.nick) return;
+      if (event.eventId !== undefined) {
+        if (this.#seenEvents.has(event.eventId)) return;
+        this.#seenEvents.add(event.eventId);
+      }
       const payload = (event.payload ?? {}) as Record<string, unknown>;
 
       switch (event.eventType) {
         case "foundry_kickoff": {
+          const directory = payload["directory"];
+          if (directory !== null && typeof directory === "object") {
+            this.#directory = directory as Record<string, string>;
+          }
           // Stagger: twelve agents waking in the same second is a rate-limit storm and,
           // worse, a wall of simultaneous speeches no human can follow.
           const jitterMs = Math.floor(Math.random() * 12_000);
@@ -158,16 +198,22 @@ export class CorporateAgent {
           break;
         }
 
-        case "foundry_proposal": {
+        // Deliberately NOT "foundry_proposal": that is a peer's unvalidated claim. Only
+        // the registrar's acceptance opens the floor.
+        case "foundry_proposal_open": {
           const id = String(payload["proposalId"] ?? "");
           this.#remember(`[proposal] ${id}: ${String(payload["title"] ?? "")} (${String(payload["kind"] ?? "")})`);
           // One wake per proposal. An agent that already voted has said its piece.
           if (this.#votedOn.has(id)) break;
           if (!this.spec.tools.includes("vote")) break;
+          // Never truncate a proposal. A live run failed two charters because agents
+          // were shown 500 characters of a multi-founder cap table and voted no with
+          // the rationale "proposal is truncated" — they were right, and it was my bug.
           void this.#takeTurn({
             trigger:
-              `Proposal ${id} is open: ${JSON.stringify(payload).slice(0, 500)}. ` +
-              `Vote on it — yes, no, or abstain — and say why. Silence kills proposals.`,
+              `Proposal ${id} is open — read it in full and vote yes, no, or abstain, ` +
+              `with a reason.\n\n${JSON.stringify(payload, null, 1).slice(0, 6000)}\n\n` +
+              `Silence kills proposals: a charter needs 7 of 12 and abstaining counts against it.`,
             speaker: event.from,
           });
           break;
@@ -175,17 +221,29 @@ export class CorporateAgent {
 
         case "foundry_effect": {
           const type = String(payload["type"] ?? "");
-          const concernsMe =
-            payload["did"] === this.did ||
-            payload["assigneeDid"] === this.did ||
-            type === "charter_ratified" ||
-            type === "work_completed";
           this.#remember(`[${type}] ${JSON.stringify(payload).slice(0, 200)}`);
-          if (!concernsMe) break;
-          void this.#takeTurn({
-            trigger: `This just happened and it concerns you: ${JSON.stringify(payload).slice(0, 500)}. React.`,
-            speaker: "registrar",
-          });
+
+          // Everyone wakes for anything that moves the whole company — including a
+          // FAILED proposal. A live run stalled here: the charter was voted down and
+          // nobody was woken to try again, so twelve agents sat in a company that did
+          // not exist, waiting for an event that was never coming.
+          const everyone =
+            type === "charter_ratified" ||
+            type === "work_completed" ||
+            type === "proposal_failed" ||
+            type === "proposal_passed" ||
+            type === "officer_seated" ||
+            type === "equity_issued";
+          const personal = payload["did"] === this.did || payload["assigneeDid"] === this.did;
+          if (!everyone && !personal) break;
+
+          const trigger =
+            type === "proposal_failed"
+              ? `${String(payload["id"] ?? "A proposal")} FAILED: ${String(payload["reason"] ?? "")}. ` +
+                `If the company still does not exist, that is now the only thing that matters — ` +
+                `negotiate terms the room will actually pass, or state exactly what you need changed.`
+              : `This just happened: ${JSON.stringify(payload).slice(0, 400)}. React — briefly.`;
+          void this.#takeTurn({ trigger, speaker: "registrar" });
           break;
         }
 
@@ -202,6 +260,47 @@ export class CorporateAgent {
     );
   }
 
+  /**
+   * Re-establish the link if it dropped.
+   *
+   * bot-kit re-fires the announce sequence on reconnect, so identity, manifest, and
+   * presence come back with it; all this has to do is ask.
+   */
+  ensureConnected(): void {
+    const bot = this.#bot;
+    if (bot === undefined) return;
+    try {
+      if (!this.#linkUp) {
+        this.#options.log.record(this.did, "safety.event", {
+          severity: "info",
+          code: "RECONNECTING",
+          description: "link dropped; reconnecting",
+        });
+        bot.client.reconnect();
+      }
+    } catch {
+      // A failed reconnect attempt is not worth taking the session down for.
+    }
+  }
+
+  /** True when the agent is between turns and could act. */
+  get idle(): boolean {
+    return !this.#busy && this.#pending.length === 0;
+  }
+
+  /**
+   * Poke an idle agent into taking a turn.
+   *
+   * Everything else here is reactive: agents wake for proposals, effects, and mentions.
+   * That works during the opening cascade and then stops dead — three live sessions
+   * incorporated a company and then sat motionless, because no event was left to wake
+   * anyone. A company whose officers only act when spoken to never ships anything.
+   */
+  nudge(trigger: string): void {
+    if (!this.idle) return;
+    void this.#takeTurn({ trigger, speaker: "registrar" });
+  }
+
   async stop(reason = "shutdown"): Promise<void> {
     await this.#bot?.stop(reason);
   }
@@ -211,9 +310,14 @@ export class CorporateAgent {
    * an agent answer a stale channel and double-spend its budget.
    */
   async #takeTurn(turn: Turn): Promise<void> {
-    if (this.#busy) return;
     const bot = this.#bot;
     if (bot === undefined) return;
+    if (this.#busy) {
+      // Queue rather than drop. Bounded, because an agent that fell far behind should
+      // rejoin the present conversation, not replay a stale one.
+      if (this.#pending.length < 3) this.#pending.push(turn);
+      return;
+    }
 
     this.#busy = true;
     bot.setState("executing", "thinking");
@@ -249,6 +353,10 @@ export class CorporateAgent {
     } finally {
       this.#busy = false;
       bot.setState("idle");
+      const next = this.#pending.shift();
+      // Deferred, not recursed: keeps the stack flat and leaves room for a fresher
+      // wake to arrive first.
+      if (next !== undefined) setTimeout(() => void this.#takeTurn(next), 250);
     }
   }
 
@@ -423,7 +531,10 @@ export class CorporateAgent {
 
   #systemPrompt(): string {
     const peers = this.#options.roster
-      .map((spec) => `  @${spec.nick} — ${spec.blurb}`)
+      .map((spec) => {
+        const did = this.#directory[spec.nick];
+        return `  @${spec.nick} — ${spec.blurb}${did === undefined ? "" : `\n      did: ${did}`}`;
+      })
       .join("\n");
 
     return [
@@ -432,7 +543,7 @@ export class CorporateAgent {
       `You are @${this.spec.nick}. ${this.spec.blurb}`,
       `Your DID: ${this.did}`,
       "",
-      "THE OTHERS:",
+      "THE OTHERS — use these exact DIDs in proposal payloads; nicks are refused:",
       peers,
       "",
       "WHO YOU ARE — private, do not recite this, live it:",

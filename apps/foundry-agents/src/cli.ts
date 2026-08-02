@@ -117,6 +117,15 @@ async function main(): Promise<number> {
     return 0;
   }
   const options = toOptions(flags);
+
+  // Backstop. A session of thirteen bots and twelve model clients will produce a stray
+  // rejection eventually; ending the run over one is worse than carrying on noisily.
+  process.on("unhandledRejection", (reason) => {
+    console.error(`  ! unhandled rejection (continuing): ${String(reason).slice(0, 240)}`);
+  });
+  process.on("uncaughtException", (error) => {
+    console.error(`  ! uncaught exception (continuing): ${String(error).slice(0, 240)}`);
+  });
   const full = corporateRoster();
   const roster = options.only.length === 0
     ? full
@@ -287,6 +296,20 @@ async function main(): Promise<number> {
     console.error("\n  no agent connected; nothing to do\n");
     return 1;
   }
+  // A charter needs a strict majority of the registered roster. Below that the session
+  // is unwinnable, and an unwinnable session that still calls paid models is just an
+  // expensive way to produce silence.
+  const quorum = Math.floor(roster.length / 2) + 1;
+  if (agents.length < quorum && roster.length > 2) {
+    console.error(
+      `\n  only ${agents.length} of ${roster.length} agents connected; a charter needs ${quorum}.` +
+        `\n  Usually a previous session is still holding these identities:` +
+        `\n    pkill -TERM -f "cli.js --owner" && sleep 45 && scripts/run-corp.sh\n`,
+    );
+    await Promise.allSettled(agents.map((agent) => agent.stop("incomplete roster")));
+    await registrar.stop("incomplete roster");
+    return 1;
+  }
 
   console.log("");
   console.log(`  Watch: https://freeq.at/ → ${options.channel}`);
@@ -295,6 +318,21 @@ async function main(): Promise<number> {
 
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 5000));
   await registrar.kickoff();
+
+  // Liveness: a silent session is indistinguishable from a dead one from the outside.
+  setInterval(() => {
+    const micros = agents.reduce((sum, agent) => sum + agent.spentMicros, 0);
+    const state = registrar.state;
+    console.log(
+      `    · ${new Date().toISOString().slice(11, 19)}  ${log.events.length} events  ` +
+        `$${(micros / 1_000_000).toFixed(3)}  ${state.phase}` +
+        `${state.companyName === undefined ? "" : ` (${state.companyName})`}`,
+    );
+    // Deliberately NOT unref'd. Node exits when no handle keeps the loop alive, and an
+    // unresolved promise is not a handle: when every socket dropped, the launcher
+    // exited silently mid-session with no error and no scoreboard. This timer is the
+    // process's guaranteed heartbeat.
+  }, 60_000);
 
   const shutdown = async (reason: string): Promise<void> => {
     console.log(`\n  ending the session (${reason})…`);
@@ -316,6 +354,27 @@ async function main(): Promise<number> {
     console.log("");
     process.exit(verification.valid ? 0 : 1);
   };
+
+  // The company must keep moving under its own steam. One agent at a time, round-robin,
+  // so the nudge costs one model call rather than twelve.
+  let nudgeIndex = 0;
+  setInterval(() => {
+    const idle = agents.filter((agent) => agent.idle);
+    if (idle.length === 0) return;
+    const agent = idle[nudgeIndex % idle.length];
+    nudgeIndex++;
+    agent?.nudge(
+      "The channel has gone quiet. If the company is stalled, move it: open the next " +
+        "proposal, chase whoever owes work, or make your case for what you want. If you " +
+        "genuinely have nothing to add, post one short line saying what you are waiting on.",
+    );
+  }, 45_000);
+
+  // Sockets die; the session should not. Reconnect any agent whose link dropped, so a
+  // network blip costs one agent a few turns instead of ending the company.
+  setInterval(() => {
+    for (const agent of agents) agent.ensureConnected();
+  }, 30_000);
 
   process.once("SIGINT", () => void shutdown("SIGINT"));
   process.once("SIGTERM", () => void shutdown("SIGTERM"));
