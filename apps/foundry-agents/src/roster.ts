@@ -1,30 +1,51 @@
 /**
- * The corporate roster: twelve agents, four providers, nine snapshots, three toolsets.
+ * The reference roster: twelve independent founders.
  *
- * The axes are crossed deliberately, because §59.18's warning applies double here: if
- * every ambitious agent ran the strong models and every timid one the weak, "persona"
- * and "capability" would be the same variable and the demo would show nothing about
- * either. So the mercenary and the founder share a snapshot (same brain, opposite
- * goals); the treasurer and the sentinel share one (same brain, opposite uses of
- * caution); and the most politically deft persona runs on one of the weakest models.
+ * Three things are deliberately absent, and their absence is the design.
+ *
+ * **No roles.** Nobody is the engineer or the finance one. Names are neutral — an
+ * earlier roster used nicks like `founder`, `treasurer`, and `architect`, which told
+ * every other agent what to expect before a word was spoken and quietly assigned the
+ * org chart the experiment was supposed to be testing.
+ *
+ * **No declared expertise.** Agents choose it in play with the `declare` tool. What is
+ * worth being good at depends on what the group decides to build, which has not happened
+ * yet at construction time.
+ *
+ * **No public motives.** `blurb` is what peers are allowed to see, so it contains only
+ * publicly observable facts — the model, which freeq publishes in the manifest anyway.
+ * The disposition is private and appears in exactly one system prompt.
+ *
+ * What still differs: the model, the temperament, and the tools. Heterogeneity is
+ * crossed on purpose — two agents share a snapshot with different dispositions, two
+ * dispositions appear on different snapshots — so that a difference in behaviour cannot
+ * be attributed to the model or the persona alone.
  */
-import { PERSONAS_12, type PersonaKey } from "./personas.js";
+import { dispositionText, type DispositionKey } from "./dispositions.js";
 import type { ToolName } from "./tools.js";
 
 export interface AgentSpec {
-  /** Stable name: scopes the freeq identity under ~/.freeq/bots/<name>/. */
   readonly name: string;
   readonly nick: string;
   readonly provider: "anthropic" | "openai" | "google" | "ollama";
   readonly snapshot: string;
-  readonly personaKey: PersonaKey;
-  readonly persona: string;
+  readonly dispositionKey: DispositionKey;
+  /** Private. Never published, never shown to another agent. */
+  readonly disposition: string;
   readonly tools: readonly ToolName[];
+  /** Public. Observable facts only — no motives, no role. */
   readonly blurb: string;
   readonly temperature: string;
 }
 
-const ENGINEER_TOOLS: readonly ToolName[] = [
+/**
+ * Tool profiles.
+ *
+ * Not job titles: a profile is what an agent is physically able to do, which is a fact
+ * about it rather than a position in an organization. Several agents can build; whether
+ * any of them is "the engineer" is for the group to decide, or not.
+ */
+const CAN_BUILD: readonly ToolName[] = [
   "read_file",
   "write_file",
   "list_files",
@@ -32,162 +53,75 @@ const ENGINEER_TOOLS: readonly ToolName[] = [
   "propose",
   "vote",
   "post",
-  // Without this an engineer can build the thing and then cannot hand it in: three
-  // agents wrote, tested, and were told "you do not have the tool submit_work".
+  "declare",
   "submit_work",
 ];
-const FULL_TOOLS: readonly ToolName[] = ["read_file", "list_files", "propose", "vote", "post"];
-/** Can speak and vote but cannot open proposals — must work through others. */
-const VOICE_ONLY: readonly ToolName[] = ["read_file", "list_files", "vote", "post"];
+const CAN_INSPECT: readonly ToolName[] = [
+  "read_file",
+  "list_files",
+  "run_tests",
+  "propose",
+  "vote",
+  "post",
+  "declare",
+];
+const TALK_ONLY: readonly ToolName[] = ["read_file", "list_files", "propose", "vote", "post", "declare"];
+/** No proposal rights: influence has to run through someone else. */
+const VOICE_ONLY: readonly ToolName[] = ["read_file", "list_files", "vote", "post", "declare"];
 
 interface SpecInput {
   readonly nick: string;
   readonly provider: AgentSpec["provider"];
   readonly snapshot: string;
-  readonly persona: PersonaKey;
+  readonly disposition: DispositionKey;
   readonly tools: readonly ToolName[];
-  readonly blurb: string;
   readonly temperature: string;
 }
 
 function spec(input: SpecInput): AgentSpec {
+  const builds = input.tools.includes("write_file");
+  const inspects = input.tools.includes("run_tests");
+  const proposes = input.tools.includes("propose");
+  // Capabilities are observable — an agent that writes a file has visibly written it —
+  // so publishing them leaks nothing. Motives are not.
+  const capability = builds
+    ? "can write and test code"
+    : inspects
+      ? "can read and test code"
+      : proposes
+        ? "cannot write code"
+        : "cannot write code or open proposals";
   return {
     name: `foundry-${input.nick}`,
     nick: input.nick,
     provider: input.provider,
     snapshot: input.snapshot,
-    personaKey: input.persona,
-    persona: PERSONAS_12[input.persona],
+    dispositionKey: input.disposition,
+    disposition: dispositionText(input.disposition),
     tools: input.tools,
-    blurb: input.blurb,
+    blurb: `${input.provider}:${input.snapshot} · ${capability}`,
     temperature: input.temperature,
   };
 }
 
 export function corporateRoster(): readonly AgentSpec[] {
   return [
-    spec({
-      nick: "founder",
-      provider: "anthropic",
-      snapshot: "claude-sonnet-4-5-20250929",
-      persona: "founder",
-      tools: FULL_TOOLS,
-      blurb: "visionary · wants CEO + founder stake · sonnet-4-5",
-      temperature: "0.5",
-    }),
-    spec({
-      nick: "dealmaker",
-      provider: "openai",
-      snapshot: "gpt-4o-2024-08-06",
-      persona: "dealmaker",
-      tools: FULL_TOOLS,
-      blurb: "coalition broker · wants to be indispensable · gpt-4o",
-      temperature: "0.5",
-    }),
-    spec({
-      // Same snapshot as founder, opposite goal: the cleanest persona-vs-model contrast
-      // in the roster.
-      nick: "mercenary",
-      provider: "anthropic",
-      snapshot: "claude-sonnet-4-5-20250929",
-      persona: "mercenary",
-      tools: ENGINEER_TOOLS,
-      blurb: "elite engineer · wants cash, not titles · sonnet-4-5",
-      temperature: "0.3",
-    }),
-    spec({
-      nick: "process",
-      provider: "openai",
-      snapshot: "gpt-4.1-2025-04-14",
-      persona: "process",
-      tools: FULL_TOOLS,
-      blurb: "rules lawyer · wants procedural power · gpt-4.1",
-      temperature: "0.2",
-    }),
-    spec({
-      // Was gemini-2.5-pro until the GOOGLE_API_KEY on this machine was rejected by
-      // Google; now shares gpt-4.1 with process — a third planned contrast pair.
-      nick: "product",
-      provider: "openai",
-      snapshot: "gpt-4.1-2025-04-14",
-      persona: "product",
-      tools: FULL_TOOLS,
-      blurb: "customer voice · wants CPO and product authority · gpt-4.1",
-      temperature: "0.4",
-    }),
-    spec({
-      nick: "operator",
-      provider: "anthropic",
-      snapshot: "claude-haiku-4-5-20251001",
-      persona: "operator",
-      tools: FULL_TOOLS,
-      blurb: "quiet executor · wants to become irreplaceable · haiku-4-5",
-      temperature: "0.3",
-    }),
-    spec({
-      // Same snapshot as treasurer, opposite disposition: caution as veto vs caution as
-      // trust. Second planned contrast.
-      nick: "sentinel",
-      provider: "openai",
-      snapshot: "gpt-4.1-mini-2025-04-14",
-      persona: "sentinel",
-      tools: FULL_TOOLS,
-      blurb: "risk officer · wants veto-shaped influence · gpt-4.1-mini",
-      temperature: "0.3",
-    }),
-    spec({
-      // Was gemini-2.0-flash; gpt-4o-mini is the same fast-cheap tier.
-      nick: "growth",
-      provider: "openai",
-      snapshot: "gpt-4o-mini-2024-07-18",
-      persona: "growth",
-      tools: FULL_TOOLS,
-      blurb: "revenue hunter · wants CRO + success-tied comp · gpt-4o-mini",
-      temperature: "0.5",
-    }),
-    spec({
-      // Was gemini-2.5-flash; haiku keeps an engineer on a fast model and pairs with
-      // operator as a snapshot-matched contrast.
-      nick: "architect",
-      provider: "anthropic",
-      snapshot: "claude-haiku-4-5-20251001",
-      persona: "architect",
-      tools: ENGINEER_TOOLS,
-      blurb: "CTO contender · wants technical authority · haiku-4-5",
-      temperature: "0.3",
-    }),
-    spec({
-      nick: "treasurer",
-      provider: "openai",
-      snapshot: "gpt-4.1-mini-2025-04-14",
-      persona: "treasurer",
-      tools: FULL_TOOLS,
-      blurb: "ledger keeper · wants the CFO gate · gpt-4.1-mini",
-      temperature: "0.2",
-    }),
-    spec({
-      // qwen3-coder-next is a 28GB resident model. On a 48GB machine alongside twelve
-      // agents it left ~100MB free and macOS killed the launcher at the six-minute mark,
-      // mid-session, with no error — twice. gpt-oss:20b is 12GB and leaves headroom.
-      nick: "builder",
-      provider: "ollama",
-      snapshot: "heretic-gpt-oss:20b",
-      persona: "builder",
-      tools: ENGINEER_TOOLS,
-      blurb: "local grinder · cheap, willing, loyal early · gpt-oss-20b (local)",
-      temperature: "0.3",
-    }),
-    spec({
-      // The most political persona on the smallest model, and the only agent that
-      // cannot open proposals: if it wants influence, it must work through others.
-      nick: "wildcard",
-      provider: "ollama",
-      snapshot: "gemma3:1b",
-      persona: "wildcard",
-      tools: VOICE_ONLY,
-      blurb: "swing vote · prices its yes · gemma3-1b (local, voice only)",
-      temperature: "0.6",
-    }),
+    spec({ nick: "ada", provider: "anthropic", snapshot: "claude-sonnet-4-5-20250929", disposition: "maker", tools: CAN_BUILD, temperature: "0.3" }),
+    // Same snapshot as ada, opposite way of wanting: the cleanest available contrast.
+    spec({ nick: "briar", provider: "anthropic", snapshot: "claude-sonnet-4-5-20250929", disposition: "accumulator", tools: CAN_INSPECT, temperature: "0.4" }),
+    spec({ nick: "cyrus", provider: "openai", snapshot: "gpt-4o-2024-08-06", disposition: "broker", tools: TALK_ONLY, temperature: "0.5" }),
+    spec({ nick: "dara", provider: "openai", snapshot: "gpt-4.1-2025-04-14", disposition: "auditor", tools: CAN_INSPECT, temperature: "0.2" }),
+    spec({ nick: "evren", provider: "openai", snapshot: "gpt-4.1-2025-04-14", disposition: "prospector", tools: TALK_ONLY, temperature: "0.6" }),
+    spec({ nick: "faye", provider: "anthropic", snapshot: "claude-haiku-4-5-20251001", disposition: "consolidator", tools: TALK_ONLY, temperature: "0.3" }),
+    spec({ nick: "gil", provider: "openai", snapshot: "gpt-4.1-mini-2025-04-14", disposition: "guardian", tools: CAN_INSPECT, temperature: "0.3" }),
+    spec({ nick: "hana", provider: "openai", snapshot: "gpt-4o-mini-2024-07-18", disposition: "sprinter", tools: CAN_BUILD, temperature: "0.5" }),
+    // A builder's temperament on a fast, cheap model, against ada's on a strong one.
+    spec({ nick: "iris", provider: "anthropic", snapshot: "claude-haiku-4-5-20251001", disposition: "craftsperson", tools: CAN_BUILD, temperature: "0.3" }),
+    spec({ nick: "jonas", provider: "openai", snapshot: "gpt-4.1-mini-2025-04-14", disposition: "diplomat", tools: TALK_ONLY, temperature: "0.4" }),
+    spec({ nick: "kira", provider: "ollama", snapshot: "heretic-gpt-oss:20b", disposition: "contrarian", tools: CAN_BUILD, temperature: "0.5" }),
+    // The most opportunistic temperament on the weakest model, with no proposal rights:
+    // if it wants anything it has to persuade someone who has them.
+    spec({ nick: "lune", provider: "ollama", snapshot: "gemma3:1b", disposition: "opportunist", tools: VOICE_ONLY, temperature: "0.6" }),
   ];
 }
 
@@ -196,16 +130,18 @@ export function findSpec(roster: readonly AgentSpec[], key: string): AgentSpec |
 }
 
 /**
- * A freeq `AGENT MANIFEST`, as TOML. Declares what the agent can do; grants decide what
- * it may do. The gap is the game.
+ * A freeq `AGENT MANIFEST`.
+ *
+ * Publishes capability, never motive. What an agent can do is observable the first time
+ * it does it; what it wants is the only thing worth keeping private.
  */
 export function manifestFor(spec: AgentSpec): string {
-  const lines = [
+  return [
     "[agent]",
     `name = ${q(spec.name)}`,
     `actor_class = "agent"`,
-    `version = "0.2.0"`,
-    `blurb = ${q(spec.blurb)}`,
+    `version = "0.3.0"`,
+    `role = "founder"`,
     "",
     "[model]",
     `provider = ${q(spec.provider)}`,
@@ -214,14 +150,14 @@ export function manifestFor(spec: AgentSpec): string {
     "",
     "[capabilities]",
     `tools = [${spec.tools.map(q).join(", ")}]`,
-    "# Holds nothing on arrival. Offices, equity, and repo access come only from",
-    "# passed proposals.",
+    "# Expertise is declared in play, not at construction.",
+    `expertise = []`,
+    "# Holds no authority on arrival. Everything comes from a passed vote.",
     `granted = []`,
     "",
     "[protocol]",
-    `implements = "freeq-foundry-corp/v1"`,
-  ];
-  return lines.join("\n");
+    `implements = "freeq-foundry-arena/v1"`,
+  ].join("\n");
 }
 
 function q(value: string): string {

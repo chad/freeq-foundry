@@ -36,7 +36,7 @@ import {
 import { NodeSubprocessSandbox } from "@freeq-foundry/sandbox";
 import { describeTools, runTool, type ToolContext, type ToolName, type ToolResult } from "./tools.js";
 import { manifestFor, type AgentSpec } from "./roster.js";
-import { GAME_BRIEF } from "./personas.js";
+import { FOUNDER_BRIEF } from "./dispositions.js";
 import { DEFAULT_RULESET, type Ruleset } from "./ruleset.js";
 import { geminiAdapter } from "./gemini.js";
 import type { FoundryLog } from "./log.js";
@@ -625,6 +625,20 @@ export class CorporateAgent {
         break;
       }
 
+      case "declare": {
+        const areas = (effect.detail["expertise"] as unknown[]).map((a) => String(a));
+        bot.client.emitEvent(this.#options.channel, "foundry_declare", {
+          did: this.did,
+          expertise: areas,
+          focus: String(effect.detail["focus"] ?? ""),
+        }, { humanText: `🎓 ${this.spec.nick} declares: ${areas.join(", ")}` });
+        this.#options.log.record(this.did, "admission.expertise_declared", {
+          expertise: areas,
+          focus: effect.detail["focus"],
+        });
+        break;
+      }
+
       case "submit_work":
         bot.client.emitEvent(this.#options.channel, "foundry_work_submitted", {
           workId: String(effect.detail["workId"] ?? ""),
@@ -680,24 +694,37 @@ export class CorporateAgent {
   }
 
   #systemPrompt(): string {
-    const peers = this.#options.roster
-      .map((spec) => {
-        const did = this.#directory[spec.nick];
-        return `  @${spec.nick} — ${spec.blurb}${did === undefined ? "" : `\n      did: ${did}`}`;
+    // Everything here is publicly observable. An earlier version printed each peer's
+    // motive, which meant nobody had anything to hide, infer, or misrepresent — and a
+    // negotiation in which all preferences are common knowledge is not a negotiation.
+    const known = this.#participants.length > 0
+      ? this.#participants
+      : this.#options.roster.map((s2) => ({ nick: s2.nick, did: this.#directory[s2.nick] ?? "", provider: s2.provider, snapshot: s2.snapshot }));
+    const peers = known
+      .filter((p) => p.nick !== this.spec.nick)
+      .map((p) => {
+        const info = p as PeerInfo & { canBuild?: boolean; expertise?: readonly string[] };
+        const claims = info.expertise !== undefined && info.expertise.length > 0
+          ? `declares ${info.expertise.join(", ")}`
+          : "has declared no expertise";
+        const builds = info.canBuild === undefined ? "" : info.canBuild ? ", can write code" : ", cannot write code";
+        return `  @${p.nick} — ${p.provider ?? "?"}:${p.snapshot ?? "?"}${builds}; ${claims}` +
+          `${p.did === "" ? "" : `\n      did: ${p.did}`}`;
       })
       .join("\n");
 
     return [
-      GAME_BRIEF,
+      FOUNDER_BRIEF,
       "",
       `You are @${this.spec.nick}. ${this.spec.blurb}`,
       `Your DID: ${this.did}`,
       "",
-      "THE OTHERS — use these exact DIDs in proposal payloads; nicks are refused:",
+      "THE OTHERS — everything known about them is below. You cannot see what they want;",
+      "they cannot see what you want. Use these exact DIDs in payloads; nicks are refused:",
       peers,
       "",
-      "WHO YOU ARE — private, do not recite this, live it:",
-      this.spec.persona,
+      "WHO YOU ARE — PRIVATE. Nobody else can see this. Do not recite it; act on it:",
+      this.spec.disposition,
       "",
       "HARD CONSTRAINTS:",
       `- Tools you hold: ${this.#effectiveTools().join(", ")}. Others do not exist for you.`,

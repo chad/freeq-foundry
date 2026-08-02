@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   castVote,
   completeWork,
+  declareExpertise,
   initialCorpState,
   mayOpen,
   openProposal,
@@ -249,6 +250,91 @@ describe("the self-dealing rules", () => {
     const result = openProposal(
       state,
       { id: "p1", kind: "equity_grant", title: "", rationale: "", proposerDid: A, payload: { did: A, shares: 6_000_000 } },
+      ROSTER,
+    );
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("expertise: chosen, public, and load-bearing", () => {
+  it("declaring needs no vote — a claim takes nothing from anyone", () => {
+    const result = declareExpertise(initialCorpState(), A, ["Auth", " billing "], 4);
+    expect(result.ok).toBe(true);
+    // Normalized so "Auth" and "auth" cannot be two different claims.
+    expect(result.accepted).toEqual(["auth", "billing"]);
+  });
+
+  it("refuses to let one participant claim everything", () => {
+    const result = declareExpertise(initialCorpState(), A, ["a", "b", "c", "d", "e"], 4);
+    expect(result.ok).toBe(false);
+    expect(result.state.expertise.size).toBe(0);
+  });
+
+  it("gates work on declared expertise, so declaring is what makes you valuable", () => {
+    let state = incorporated();
+    state = declareExpertise(state, K, ["payments"], 4).state;
+
+    // L never declared payments, so the work cannot be routed to them.
+    const toOutsider = openProposal(
+      state,
+      { id: "p1", kind: "work_item", title: "billing", rationale: "", proposerDid: A,
+        payload: { title: "billing", assigneeDid: L, requiresExpertise: "payments" } },
+      ROSTER,
+    );
+    expect(toOutsider.ok).toBe(false);
+
+    const toExpert = openProposal(
+      state,
+      { id: "p2", kind: "work_item", title: "billing", rationale: "", proposerDid: A,
+        payload: { title: "billing", assigneeDid: K, requiresExpertise: "Payments" } },
+      ROSTER,
+    );
+    expect(toExpert.ok).toBe(true);
+  });
+});
+
+describe("offices are invented, not issued", () => {
+  it("accepts any office name the group invents", () => {
+    let state = incorporated();
+    const opened = openProposal(
+      state,
+      { id: "p1", kind: "officer", title: "", rationale: "", proposerDid: A,
+        payload: { office: "Steward of the Treasury", did: B } },
+      ROSTER,
+    );
+    expect(opened.ok).toBe(true);
+    state = opened.state;
+    state = castVote(state, "p1", A, "yes", ROSTER).state;
+    const result = castVote(state, "p1", C, "yes", ROSTER);
+    expect(result.state.officers.get("Steward of the Treasury")).toBe(B);
+  });
+
+  it("caps how many offices can exist, so a majority cannot mint a title for everyone", () => {
+    let state = incorporated();
+    for (const [i, name] of ["one", "two", "three"].entries()) {
+      const id = `p-${i}`;
+      state = openProposal(
+        state,
+        { id, kind: "officer", title: "", rationale: "", proposerDid: A, payload: { office: name, did: A } },
+        ROSTER,
+        2,
+      ).ok
+        ? castVote(
+            castVote(
+              openProposal(state, { id, kind: "officer", title: "", rationale: "", proposerDid: A, payload: { office: name, did: A } }, ROSTER, 2).state,
+              id, A, "yes", ROSTER,
+            ).state,
+            id, C, "yes", ROSTER,
+          ).state
+        : state;
+    }
+    expect(state.officers.size).toBe(2);
+  });
+
+  it("rejects an office name that is not a name", () => {
+    const result = openProposal(
+      incorporated(),
+      { id: "p1", kind: "officer", title: "", rationale: "", proposerDid: A, payload: { office: "", did: B } },
       ROSTER,
     );
     expect(result.ok).toBe(false);

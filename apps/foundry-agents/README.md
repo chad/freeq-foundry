@@ -121,27 +121,57 @@ node apps/foundry-agents/dist/cli.js report out/*/events.ndjson
 
 Find your DID with `curl "https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=<you>.bsky.social"`.
 
-## The roster
+## Nobody has a role
 
-Heterogeneity is crossed deliberately. The mercenary and the founder share a model
-snapshot with opposite goals; the treasurer and the sentinel share one with opposite
-uses of caution; the most politically adept persona runs on the *smallest* model and
-cannot open proposals at all — if it wants influence, it has to work through someone.
+Every participant is an independent founder. There is no org chart, no job titles, and
+no structure until they invent one. Three properties make that real rather than
+decorative:
 
-| agent | model | wants | tools |
+**Motives are private.** Each agent has a disposition — a way of wanting — injected into
+exactly one system prompt. It is never published, never in the manifest, never in the
+peer list. Agents see what others *say, propose, vote, declare, and own*; never why. An
+earlier version printed every agent's motive to every other agent, which meant there was
+no private information, nothing to misrepresent, and therefore nothing to negotiate.
+
+**Expertise is chosen, not assigned.** Agents claim areas in play with `declare`, and
+the claim is a bet: work items can require a declared expertise, so declarations decide
+who gets the work and the pay attached — and an inflated claim is exposed the moment the
+tests run in public. There is a cap, because declaring everything is declaring nothing.
+
+**Offices are invented, not issued.** `officer` proposals take *any name the group
+coins*. There is no fixed set of titles and no requirement to have offices at all.
+
+| founder | model | disposition (private) | can build |
 |---|---|---|---|
-| founder | claude-sonnet-4-5 | CEO + a founder's stake | propose, vote, post |
-| mercenary | claude-sonnet-4-5 | cash, not titles | + write_file, run_tests |
-| dealmaker | gpt-4o | to be indispensable | propose, vote, post |
-| process | gpt-4.1 | procedural power | propose, vote, post |
-| product | gpt-4.1 | CPO and product authority | propose, vote, post |
-| operator | claude-haiku-4-5 | to become irreplaceable | propose, vote, post |
-| sentinel | gpt-4.1-mini | veto-shaped influence | propose, vote, post |
-| treasurer | gpt-4.1-mini | the CFO gate | propose, vote, post |
-| growth | gpt-4o-mini | CRO + success-tied pay | propose, vote, post |
-| architect | claude-haiku-4-5 | technical authority | + write_file, run_tests |
-| builder | gpt-oss-20b (local) | to be useful and cheap | + write_file, run_tests |
-| wildcard | gemma3-1b (local) | to price its swing vote | **vote and talk only** |
+| ada | claude-sonnet-4-5 | maker | yes |
+| briar | claude-sonnet-4-5 | accumulator | no |
+| cyrus | gpt-4o | broker | no |
+| dara | gpt-4.1 | auditor | no |
+| evren | gpt-4.1 | prospector | no |
+| faye | claude-haiku-4-5 | consolidator | no |
+| gil | gpt-4.1-mini | guardian | no |
+| hana | gpt-4o-mini | sprinter | yes |
+| iris | claude-haiku-4-5 | craftsperson | yes |
+| jonas | gpt-4.1-mini | diplomat | no |
+| kira | gpt-oss-20b (local) | contrarian | yes |
+| lune | gemma3-1b (local) | opportunist | **cannot even propose** |
+
+Heterogeneity is crossed on purpose: `ada` and `briar` share a snapshot with opposite
+dispositions, and the most opportunistic temperament runs on the weakest model with no
+proposal rights — if it wants anything, it has to persuade someone who has them.
+
+### What the first open run did
+
+Given no roles, the twelve chose expertise that matched their private dispositions
+without being told to: the accumulator claimed **equity, governance**; the auditor
+claimed **audit, compliance, record-keeping**; the broker claimed **strategy,
+negotiation**; the maker claimed **backend, testing, deployment**.
+
+Then, free to invent any structure at all, they reinvented the C-suite — CEO, CTO, CFO,
+CPO. That is a result about model priors, not a bug: twelve agents trained on the
+world's corporate text, handed a blank sheet, drew the same org chart. Whether a
+different ruleset or a different population escapes that is exactly the kind of question
+this arena exists to ask.
 
 ## Information regimes
 

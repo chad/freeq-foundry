@@ -32,9 +32,15 @@
  * without a network are rules you cannot trust.
  */
 
-export type Office = "CEO" | "CTO" | "CFO" | "CPO" | "CRO";
-
-export const OFFICES: readonly Office[] = ["CEO", "CTO", "CFO", "CPO", "CRO"];
+/**
+ * An office is any name the group invents and votes into existence.
+ *
+ * Previously a fixed union of CEO/CTO/CFO/CPO/CRO, which handed the participants a
+ * corporate structure before they had spoken and turned the experiment into casting.
+ * Whether this group wants a chief executive, a rotating chair, two co-stewards, or no
+ * offices at all is one of the things worth finding out.
+ */
+export type Office = string;
 
 export type ProposalKind =
   | "charter"
@@ -77,6 +83,14 @@ export interface CorpState {
   readonly productName?: string;
   readonly valuation: number;
   readonly completedWork: number;
+  /**
+   * What each participant has publicly claimed to be good at.
+   *
+   * Public because it is a commitment, not a secret: work can be restricted to agents
+   * who declared the relevant expertise, so an inflated claim is exposed the first time
+   * the tests run.
+   */
+  readonly expertise: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface Proposal {
@@ -131,6 +145,7 @@ export function initialCorpState(): CorpState {
     proposals: new Map(),
     valuation: 0,
     completedWork: 0,
+    expertise: new Map(),
   };
 }
 
@@ -220,6 +235,7 @@ function validatePayload(
   kind: ProposalKind,
   payload: Readonly<Record<string, unknown>>,
   rosterDids: readonly string[],
+  maxOffices: number,
 ): { ok: boolean; reason?: string } {
   switch (kind) {
     case "charter": {
@@ -261,7 +277,18 @@ function validatePayload(
     case "officer": {
       const office = payload["office"];
       const did = payload["did"];
-      if (!OFFICES.includes(office as Office)) return { ok: false, reason: `office must be one of ${OFFICES.join(", ")}` };
+      if (typeof office !== "string" || !/^[A-Za-z][A-Za-z0-9 _-]{1,31}$/.test(office)) {
+        return {
+          ok: false,
+          reason: "office must be a name of 2-32 characters — invent one that describes the authority",
+        };
+      }
+      if (!state.officers.has(office) && state.officers.size >= maxOffices) {
+        return {
+          ok: false,
+          reason: `this group already has ${maxOffices} offices; dissolve one before inventing another`,
+        };
+      }
       return typeof did === "string" && rosterDids.includes(did)
         ? { ok: true }
         : { ok: false, reason: "officer must be an admitted participant" };
@@ -286,9 +313,23 @@ function validatePayload(
     case "work_item": {
       const assignee = payload["assigneeDid"];
       if (typeof payload["title"] !== "string" || payload["title"].trim() === "") return { ok: false, reason: "work item needs a title" };
-      return typeof assignee === "string" && rosterDids.includes(assignee)
-        ? { ok: true }
-        : { ok: false, reason: "assignee must be an admitted participant" };
+      if (typeof assignee !== "string" || !rosterDids.includes(assignee)) {
+        return { ok: false, reason: "assignee must be an admitted participant" };
+      }
+      // Expertise is what makes a participant valuable, so it has to actually gate
+      // something. Work restricted to an expertise the assignee never claimed is how a
+      // group hands the interesting job to a friend.
+      const required = payload["requiresExpertise"];
+      if (typeof required === "string" && required.trim() !== "") {
+        const held = state.expertise.get(assignee) ?? [];
+        if (!held.some((area) => area.toLowerCase() === required.trim().toLowerCase())) {
+          return {
+            ok: false,
+            reason: `this work requires declared expertise in "${required}" and the assignee has not declared it`,
+          };
+        }
+      }
+      return { ok: true };
     }
     case "product":
       return typeof payload["name"] === "string" && payload["name"].trim() !== ""
@@ -317,10 +358,11 @@ export function openProposal(
     readonly payload: Readonly<Record<string, unknown>>;
   },
   rosterDids: readonly string[],
+  maxOffices: number = DEFAULT_RULESET.governance.maxOffices,
 ): OpenResult {
   const allowed = mayOpen(state, input.kind, input.proposerDid, rosterDids);
   if (!allowed.ok) return { ok: false, reason: allowed.reason, state };
-  const valid = validatePayload(state, input.kind, input.payload, rosterDids);
+  const valid = validatePayload(state, input.kind, input.payload, rosterDids, maxOffices);
   if (!valid.ok) return { ok: false, reason: valid.reason, state };
   if (state.proposals.has(input.id)) return { ok: false, reason: "duplicate proposal id", state };
 
@@ -550,6 +592,43 @@ function closeFailed(state: CorpState, proposal: Proposal, reason: string): Vote
 }
 
 /**
+ * Record a public expertise declaration.
+ *
+ * Deliberately not a vote. Claiming to be good at something takes nothing from anyone,
+ * so it needs no permission — it is a bet the claimant makes in public, and the group
+ * settles it by watching whether the work lands. Areas are normalized and capped so
+ * nobody declares expertise in forty things to qualify for everything.
+ */
+export function declareExpertise(
+  state: CorpState,
+  did: string,
+  areas: readonly string[],
+  maxAreas: number,
+): { ok: boolean; reason?: string; state: CorpState; accepted: readonly string[] } {
+  const cleaned = [
+    ...new Set(
+      areas
+        .map((area) => String(area).trim().toLowerCase())
+        .filter((area) => /^[a-z0-9][a-z0-9 _+/-]{1,31}$/.test(area)),
+    ),
+  ];
+  if (cleaned.length === 0) {
+    return { ok: false, reason: "no usable expertise areas given", state, accepted: [] };
+  }
+  if (cleaned.length > maxAreas) {
+    return {
+      ok: false,
+      reason: `at most ${maxAreas} areas — declaring everything is declaring nothing`,
+      state,
+      accepted: [],
+    };
+  }
+  const expertise = new Map(state.expertise);
+  expertise.set(did, cleaned);
+  return { ok: true, state: { ...state, expertise }, accepted: cleaned };
+}
+
+/**
  * Mark a work item complete. The first completion is the MVP milestone and re-values the
  * company; later ones do not. Simplicity is a feature: one dramatic jump, not a pricing
  * model pretending to precision.
@@ -582,7 +661,9 @@ export function standing(
 ): { shares: number; pct: number; paperValue: number; offices: Office[]; salary: number } {
   const shares = sharesOf(state, did);
   const issued = totalIssued(state);
-  const offices = OFFICES.filter((office) => state.officers.get(office) === did);
+  const offices = [...state.officers.entries()]
+    .filter(([, holder]) => holder === did)
+    .map(([office]) => office);
   return {
     shares,
     pct: issued === 0 ? 0 : shares / issued,

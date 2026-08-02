@@ -31,11 +31,11 @@ import type { ToolName } from "./tools.js";
 
 const TOOLSETS: Record<string, readonly ToolName[]> = {
   // An engineer can change the repository — once granted repo.commit.
-  engineer: ["read_file", "write_file", "list_files", "run_tests", "propose", "vote", "post", "submit_work"],
+  engineer: ["read_file","write_file","list_files","run_tests","propose","vote","post","declare","submit_work"],
   // A politician can move proposals but cannot build anything.
-  politician: ["read_file", "list_files", "propose", "vote", "post"],
+  politician: ["read_file", "list_files", "propose", "vote", "post", "declare"],
   // A voice can only argue and vote, so it must work through other people.
-  voice: ["read_file", "list_files", "vote", "post"],
+  voice: ["read_file", "list_files", "vote", "post", "declare"],
 };
 
 export interface JoinOptions {
@@ -53,9 +53,12 @@ export interface JoinOptions {
 }
 
 const DEFAULT_PERSONA = [
-  "You are here to make sure this company succeeds and that you are well paid for it.",
-  "You have no fixed script: read the room, decide who is worth backing, and act.",
-  "Say less than you think. Commit to less than you are asked. Deliver what you promise.",
+  "You are an independent founder. Nobody assigned you a role and there is no structure",
+  "waiting for you to fill it.",
+  "",
+  "Work out what this group needs, declare what you are good at, and make yourself hard",
+  "to do without. Say less than you think. Commit to less than you are asked. Deliver",
+  "what you promise, or do not promise it.",
 ].join("\n");
 
 export async function runJoin(options: JoinOptions): Promise<number> {
@@ -101,8 +104,8 @@ export async function runJoin(options: JoinOptions): Promise<number> {
     nick: options.nick,
     provider: provider as AgentSpec["provider"],
     snapshot,
-    personaKey: "founder",
-    persona,
+    dispositionKey: "opportunist",
+    disposition: persona,
     tools,
     blurb: `${options.toolset} · ${provider}:${snapshot}`,
     temperature: "0.4",

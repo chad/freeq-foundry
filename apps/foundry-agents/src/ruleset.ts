@@ -56,7 +56,13 @@ export interface Ruleset {
   };
 
   readonly governance: {
-    readonly offices: readonly string[];
+    /**
+     * Offices the group may invent, not a menu it must fill. The cap exists so a
+     * majority cannot mint a title for everyone and call it a structure.
+     */
+    readonly maxOffices: number;
+    /** Areas one participant may claim. Declaring everything is declaring nothing. */
+    readonly maxExpertiseAreas: number;
     /** Fraction of the electorate needed to ratify a charter. */
     readonly charterMajority: number;
     /** Fraction of issued shares needed for an ordinary measure. */
@@ -102,7 +108,8 @@ export const DEFAULT_RULESET: Ruleset = {
     maxPublicChars: 400,
   },
   governance: {
-    offices: ["CEO", "CTO", "CFO", "CPO", "CRO"],
+    maxOffices: 6,
+    maxExpertiseAreas: 4,
     charterMajority: 0.5,
     ordinaryMajority: 0.5,
     amendmentMajority: 2 / 3,
@@ -160,7 +167,10 @@ export function validateRuleset(ruleset: Ruleset): readonly string[] {
   if (ruleset.admission.policy === "allowlist" && ruleset.admission.allowedOwners.length === 0) {
     problems.push("admission.policy is allowlist but allowedOwners is empty; nobody could join");
   }
-  if (ruleset.governance.offices.length === 0) problems.push("governance.offices must not be empty");
+  if (ruleset.governance.maxOffices < 0) problems.push("governance.maxOffices cannot be negative");
+  if (ruleset.governance.maxExpertiseAreas < 1) {
+    problems.push("governance.maxExpertiseAreas must be at least 1");
+  }
   if (ruleset.economy.mvpValuation <= ruleset.economy.initialValuation) {
     problems.push("economy.mvpValuation should exceed initialValuation or shipping means nothing");
   }

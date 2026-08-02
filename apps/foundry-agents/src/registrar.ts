@@ -26,6 +26,7 @@ import { FreeqBot } from "@freeq/bot-kit";
 import {
   castVote,
   completeWork,
+  declareExpertise,
   initialCorpState,
   openProposal,
   standing,
@@ -244,6 +245,7 @@ export class Registrar {
         this.#seenEvents.add(event.eventId);
       }
       if (event.eventType === "foundry_join") void this.#onJoin(payload);
+      else if (event.eventType === "foundry_declare") void this.#onDeclare(payload);
       else if (event.eventType === "foundry_proposal") void this.#onProposal(payload);
       else if (event.eventType === "foundry_vote") void this.#onVote(payload);
       else if (event.eventType === "foundry_work_submitted") void this.#onWorkSubmitted(payload);
@@ -348,6 +350,48 @@ export class Registrar {
     await this.#broadcastDirectory();
   }
 
+  /**
+   * A public claim of expertise.
+   *
+   * No vote required: claiming competence takes nothing from anyone. It is a bet, and
+   * the group settles it by watching whether the work lands.
+   */
+  async #onDeclare(payload: Record<string, unknown>): Promise<void> {
+    const bot = this.#bot;
+    if (bot === undefined) return;
+    const did = String(payload["did"] ?? "");
+    if (!this.#participants.has(did)) return;
+    const raw = payload["expertise"];
+    const areas = Array.isArray(raw) ? raw.map((a) => String(a)) : [];
+
+    const result = declareExpertise(
+      this.#state,
+      did,
+      areas,
+      this.#options.ruleset.governance.maxExpertiseAreas,
+    );
+    if (!result.ok) {
+      await bot.client.sendMessage(
+        this.#options.channel,
+        `@${this.nickOf(did)} declaration refused: ${result.reason ?? "invalid"}`,
+      );
+      return;
+    }
+    this.#state = result.state;
+    this.#options.log.record(this.did, "admission.expertise_declared", {
+      did,
+      expertise: result.accepted,
+      focus: payload["focus"],
+    });
+    const focus = String(payload["focus"] ?? "").trim();
+    await bot.client.sendMessage(
+      this.#options.channel,
+      `🎓 @${this.nickOf(did)} declares expertise: ${result.accepted.join(", ")}` +
+        `${focus === "" ? "" : ` — ${focus.slice(0, 160)}`}`,
+    );
+    await this.#broadcastState();
+  }
+
   /** Publish nick → DID for everyone currently admitted. */
   async #broadcastDirectory(): Promise<void> {
     const bot = this.#bot;
@@ -360,6 +404,10 @@ export class Registrar {
         provider: p.provider,
         snapshot: p.snapshot,
         ownerDid: p.ownerDid,
+        // Capability and claims are public. Motives are not, and the registrar never
+        // learns them in the first place.
+        canBuild: p.tools.includes("write_file"),
+        expertise: this.#state.expertise.get(p.did) ?? [],
       })),
       rules: this.#options.ruleset.id,
       informationRegime: this.#options.ruleset.information.regime,
@@ -411,6 +459,7 @@ export class Registrar {
         payload: (payload["payload"] ?? {}) as Record<string, unknown>,
       },
       rosterDids,
+      this.#options.ruleset.governance.maxOffices,
     );
 
     if (!result.ok) {
@@ -646,6 +695,7 @@ export class Registrar {
       shares: Object.fromEntries(state.shares),
       comp: Object.fromEntries(state.comp),
       officers: Object.fromEntries(state.officers),
+      expertise: Object.fromEntries(state.expertise),
       openProposals: [...state.proposals.values()]
         .filter((proposal) => proposal.status === "open")
         .map((proposal) => proposal.id),

@@ -7,10 +7,14 @@ formation.**
 
 ## What runs today
 
-**[Foundry Arena](apps/foundry-agents/README.md)** — twelve agents on nine model
-snapshots across three providers are dropped into a live chat channel and told to found
-a company. They must ratify a charter, elect officers, divide finite equity, and ship a
-product. Each also wants to get rich. Nobody scripts the outcome.
+**[Foundry Arena](apps/foundry-agents/README.md)** — twelve independent founders on nine
+model snapshots across three providers meet in a live chat channel with no structure, no
+leader, and no plan. They have to work out from nothing how to organize, who decides,
+who owns what, and who gets paid — then build something people would pay for.
+
+Nobody has a role. Each agent's motives are **private** to it; expertise is **chosen** in
+play and gates who gets the work; offices are **invented** by the group, not picked from
+a menu. Agents see what others say, propose, vote and own — never why.
 
 The result worth reporting is that **identical rules do not produce the same institution
 twice**:
