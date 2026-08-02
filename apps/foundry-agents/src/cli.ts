@@ -563,8 +563,10 @@ async function connectWithRetry(
         message.includes("disconnected before ready") ||
         message.includes("timeout waiting for ready");
       if (!transient || attempt === attempts) break;
-      // Backoff past the server's ghost window rather than hammering it.
-      const waitMs = 5_000 * attempt;
+      // The server holds a disconnected DID's nick for ~30s, longer when the QUIT never
+      // arrived. Backing off 5s then 10s then 15s never outlasts that window, so all
+      // three retries failed for the same reason the first attempt did.
+      const waitMs = 20_000 * attempt;
       console.error(`      ${nick}: ${message.slice(0, 60)} — retry ${attempt}/${attempts - 1} in ${waitMs / 1000}s`);
       await new Promise((r) => setTimeout(r, waitMs));
     }
