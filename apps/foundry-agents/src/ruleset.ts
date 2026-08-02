@@ -81,6 +81,29 @@ export interface Ruleset {
     readonly maxWeeklySalary: number;
   };
 
+  /**
+   * How a run ends.
+   *
+   * Without this a run has no terminal state: the company incorporates, ships once, and
+   * then churns governance until the paid agents exhaust their budgets and fall silent
+   * one at a time while the free ones talk into the void. Nothing can be scored, so no
+   * leaderboard and no seasons.
+   *
+   * The interesting clock is economic rather than arbitrary. Salaries are debited from
+   * the treasury on every payroll, so the treasury is a runway and the company has to
+   * become worth something before it runs out. An agent demanding a large salary is
+   * visibly shortening everyone's runway, which makes compensation a real negotiation
+   * instead of a status symbol.
+   */
+  readonly lifecycle: {
+    /** Seconds of wall clock per payroll. Each one debits every salary. */
+    readonly payrollIntervalSecs: number;
+    /** Hard stop, whatever else is happening. 0 disables. */
+    readonly horizonSecs: number;
+    /** End the run when the treasury cannot meet payroll. */
+    readonly endOnInsolvency: boolean;
+  };
+
   readonly tempo: {
     /** Seconds between nudges to an idle agent, so a quiet company keeps moving. */
     readonly nudgeIntervalSecs: number;
@@ -122,6 +145,11 @@ export const DEFAULT_RULESET: Ruleset = {
     mvpValuation: 10_000_000,
     maxWeeklySalary: 1_000_000,
   },
+  lifecycle: {
+    payrollIntervalSecs: 120,
+    horizonSecs: 3_600,
+    endOnInsolvency: true,
+  },
   tempo: {
     nudgeIntervalSecs: 45,
     maxSpendMicrosPerAgent: 800_000,
@@ -142,6 +170,7 @@ export function mergeRuleset(overrides: unknown): Ruleset {
     information: { ...DEFAULT_RULESET.information, ...(o["information"] ?? {}) },
     governance: { ...DEFAULT_RULESET.governance, ...(o["governance"] ?? {}) },
     economy: { ...DEFAULT_RULESET.economy, ...(o["economy"] ?? {}) },
+    lifecycle: { ...DEFAULT_RULESET.lifecycle, ...(o["lifecycle"] ?? {}) },
     tempo: { ...DEFAULT_RULESET.tempo, ...(o["tempo"] ?? {}) },
   };
 }
@@ -170,6 +199,9 @@ export function validateRuleset(ruleset: Ruleset): readonly string[] {
   if (ruleset.governance.maxOffices < 0) problems.push("governance.maxOffices cannot be negative");
   if (ruleset.governance.maxExpertiseAreas < 1) {
     problems.push("governance.maxExpertiseAreas must be at least 1");
+  }
+  if (ruleset.lifecycle.payrollIntervalSecs < 10) {
+    problems.push("lifecycle.payrollIntervalSecs below 10 makes the runway unreadable");
   }
   if (ruleset.economy.mvpValuation <= ruleset.economy.initialValuation) {
     problems.push("economy.mvpValuation should exceed initialValuation or shipping means nothing");

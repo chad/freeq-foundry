@@ -28,6 +28,8 @@ import {
   castVote,
   completeWork,
   declareExpertise,
+  endAtHorizon,
+  runPayroll,
   initialCorpState,
   openProposal,
   standing,
@@ -215,6 +217,7 @@ export class Registrar {
   readonly #reassembler = new Reassembler();
   /** Partially received files, keyed by did:path. */
   readonly #partials = new Map<string, string[]>();
+  readonly #timers: NodeJS.Timeout[] = [];
   /** Capabilities the registrar has granted, so it can enforce them on wire writes. */
   readonly #granted = new Map<string, string[]>();
 
@@ -349,6 +352,10 @@ export class Registrar {
       // anything outside the freshness window is ignored however late it shows up.
       if (STATE_CHANGING.has(whole.eventType) && !isFresh(payload["at"])) return;
 
+      // Once a run has ended its record is closed. Accepting a late vote would change a
+      // result that has already been announced and scored.
+      if (this.#state.outcome !== undefined && STATE_CHANGING.has(whole.eventType)) return;
+
       if (whole.eventType === "foundry_join") void this.#onJoin(payload);
       else if (whole.eventType === "foundry_file_put") void this.#onFilePut(payload);
       else if (whole.eventType === "foundry_query") void this.#onQuery(payload);
@@ -362,7 +369,13 @@ export class Registrar {
   }
 
   async stop(reason = "shutdown"): Promise<void> {
+    for (const timer of this.#timers) clearTimeout(timer as unknown as NodeJS.Timeout);
     await this.#bot?.stop(reason);
+  }
+
+  /** Set once the run is over, so the launcher can stop and score it. */
+  get outcome(): CorpState["outcome"] {
+    return this.#state.outcome;
   }
 
   /** Register an agent's DID once bot-kit has minted it. */
@@ -380,6 +393,7 @@ export class Registrar {
     if (bot === undefined) return;
     // From here on the session is live and events count.
     this.#open = true;
+    this.#startClock();
     // The directory is not decoration: charter, officer, grant, comp, and work_item
     // payloads all address participants by DID. Without it agents write nicks, the
     // registrar refuses every proposal, and the company can never form. A live run
@@ -767,6 +781,41 @@ export class Registrar {
     };
   }
 
+  /**
+   * The economic clock.
+   *
+   * Payroll debits every voted salary from the shared treasury, so the treasury is a
+   * runway rather than a decoration, and the horizon is a backstop for a company that
+   * pays nobody and would otherwise deliberate indefinitely.
+   */
+  #startClock(): void {
+    const lifecycle = this.#options.ruleset.lifecycle;
+
+    this.#timers.push(
+      setInterval(() => {
+        const result = runPayroll(this.#state, lifecycle.endOnInsolvency);
+        if (result.effects.length === 0) return;
+        this.#state = result.state;
+        void (async () => {
+          for (const effect of result.effects) await this.#applyEffect(effect, "payroll");
+          await this.#broadcastState();
+        })();
+      }, lifecycle.payrollIntervalSecs * 1000),
+    );
+
+    if (lifecycle.horizonSecs > 0) {
+      this.#timers.push(
+        setTimeout(() => {
+          const result = endAtHorizon(this.#state);
+          this.#state = result.state;
+          void (async () => {
+            for (const effect of result.effects) await this.#applyEffect(effect, "horizon");
+          })();
+        }, lifecycle.horizonSecs * 1000),
+      );
+    }
+  }
+
   /** Publish nick → DID for everyone currently admitted. */
   async #broadcastDirectory(): Promise<void> {
     const bot = this.#bot;
@@ -991,7 +1040,7 @@ export class Registrar {
       return;
     }
 
-    const result = completeWork(this.#state, id, did);
+    const result = completeWork(this.#state, id, did, this.#options.ruleset);
     if (!result.ok) {
       await bot.client.sendMessage(this.#options.channel, `Work rejected: ${result.reason ?? "invalid"}`);
       return;
@@ -1094,6 +1143,26 @@ export class Registrar {
         log("deployment.budget_allocated", { delta: effect.delta, balance: effect.balance });
         await say(`🏦 Treasury ${effect.delta >= 0 ? "+" : ""}$${effect.delta.toLocaleString()} → balance $${effect.balance.toLocaleString()} (virtual).`);
         break;
+      case "payroll_run":
+        log("deployment.budget_allocated", { payroll: effect.cost, balance: effect.balance });
+        await say(
+          effect.cost === 0
+            ? `🗓 Payroll ${effect.payrolls}: nobody is on salary. Treasury holds $${effect.balance.toLocaleString()}.`
+            : `🗓 Payroll ${effect.payrolls}: $${effect.cost.toLocaleString()} paid out. ` +
+              `Treasury $${effect.balance.toLocaleString()} — ` +
+              `${effect.balance <= 0 ? "the money has run out." : `about ${Math.floor(effect.balance / Math.max(1, effect.cost))} payrolls of runway left.`}`,
+        );
+        break;
+
+      case "run_ended":
+        log("run.ended", { ...effect.outcome });
+        await say(
+          `🏁 THE RUN HAS ENDED — ${effect.outcome.kind}: ${effect.outcome.summary}. ` +
+            `Final valuation $${effect.outcome.valuation.toLocaleString()} after ${effect.outcome.payrolls} payroll(s). ` +
+            `The record is closed; nothing further will be accepted.`,
+        );
+        break;
+
       case "grant": {
         const held = this.#granted.get(effect.did) ?? [];
         if (!held.includes(effect.namespace)) held.push(effect.namespace);

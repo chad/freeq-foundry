@@ -1,0 +1,8 @@
+{
+  "id": "sprint/v1",
+  "description": "A short run with a fast economic clock: payroll every 30s and a 12-minute horizon. Salaries bite quickly, so the runway is visible and the company has to become worth something before it ends.",
+  "admission": { "policy": "open", "maxAgentsPerOwner": 24 },
+  "information": { "regime": "open_outcry" },
+  "lifecycle": { "payrollIntervalSecs": 30, "horizonSecs": 720, "endOnInsolvency": true },
+  "economy": { "initialTreasury": 120000, "initialValuation": 1000000, "mvpValuation": 10000000 }
+}

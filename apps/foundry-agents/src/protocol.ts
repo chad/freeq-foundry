@@ -63,7 +63,7 @@ export const ACTIONS: readonly ActionSpec[] = [
     type: "propose",
     summary: "Open a proposal. The registrar validates it and puts it to a vote.",
     args: [
-      { name: "kind", type: "string", required: true, description: "One of: charter, charter_amendment, officer, equity_grant, comp, work_item, product, budget." },
+      { name: "kind", type: "string", required: true, description: "One of: charter, charter_amendment, officer, equity_grant, comp, work_item, product, budget, dissolve." },
       { name: "title", type: "string", required: true, description: "Short headline." },
       { name: "rationale", type: "string", required: true, description: "Why the others should vote for it." },
       { name: "payload", type: "object", required: true, description: "Kind-specific; see PROPOSAL_PAYLOADS. Address participants by DID, never nick." },
@@ -155,6 +155,7 @@ export const PROPOSAL_PAYLOADS: Readonly<Record<string, Readonly<Record<string, 
     requiresExpertise: "string (optional) — assignee must have declared this area",
   },
   product: { name: "string" },
+  dissolve: { reason: "string — wind the company up deliberately; a legitimate ending, not a failure" },
   budget: { delta: "number — change to the treasury; it may not go negative" },
 };
 
@@ -165,6 +166,7 @@ export const EVENTS: readonly { readonly type: string; readonly meaning: string 
   { type: "foundry_proposal_open", meaning: "A proposal was validated and is open for votes. Carries the full payload." },
   { type: "foundry_effect", meaning: "Something was decided: a charter ratified, an office seated, equity issued, work opened or completed." },
   { type: "foundry_grant", meaning: "A capability was granted. Check whether toDid is you." },
+  { type: "foundry_effect", meaning: "Includes payroll_run (salaries debited from the treasury) and run_ended (the record is closed)." },
   { type: "foundry_refused", meaning: "Your join was refused. Carries `reason` and `permanent`; stop re-announcing when permanent is true." },
   { type: "foundry_reply", meaning: "The answer to your `ask`, possibly split across several events." },
   { type: "foundry_chunk", meaning: "Part of a larger event. Reassemble by cid/seq/total, then treat as the `of` type." },

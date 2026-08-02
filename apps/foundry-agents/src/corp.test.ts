@@ -6,10 +6,13 @@
  * publicly cheated by arithmetic nobody audited.
  */
 import { describe, expect, it } from "vitest";
+import { mergeRuleset } from "./ruleset.js";
 import {
   castVote,
   completeWork,
   declareExpertise,
+  endAtHorizon,
+  runPayroll,
   initialCorpState,
   mayOpen,
   openProposal,
@@ -338,6 +341,89 @@ describe("offices are invented, not issued", () => {
       ROSTER,
     );
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("the clock: payroll, runway, and endings", () => {
+  /** Incorporate, then put someone on a salary. */
+  function withSalary(salary: number): CorpState {
+    let state = incorporated();
+    state = openProposal(
+      state,
+      { id: "p-pay", kind: "comp", title: "", rationale: "", proposerDid: A, payload: { did: A, salary } },
+      ROSTER,
+    ).state;
+    state = castVote(state, "p-pay", A, "yes", ROSTER).state;
+    state = castVote(state, "p-pay", C, "yes", ROSTER).state;
+    expect(state.comp.get(A)).toBe(salary);
+    return state;
+  }
+
+  it("debits every voted salary from the shared treasury", () => {
+    const state = withSalary(50_000);
+    const after = runPayroll(state, true);
+    expect(after.state.treasury).toBe(INITIAL_TREASURY - 50_000);
+    expect(after.state.payrolls).toBe(1);
+  });
+
+  it("a company that pays nobody burns no runway", () => {
+    const after = runPayroll(incorporated(), true);
+    expect(after.state.treasury).toBe(INITIAL_TREASURY);
+  });
+
+  it("ends the run when the treasury cannot meet payroll", () => {
+    // A salary the company cannot sustain: solvent for two payrolls, then not.
+    let state = withSalary(100_000);
+    for (let i = 0; i < 2; i++) state = runPayroll(state, true).state;
+    expect(state.outcome).toBeUndefined();
+    expect(state.treasury).toBe(50_000);
+
+    const bust = runPayroll(state, true);
+    expect(bust.state.outcome?.kind).toBe("insolvent");
+    expect(bust.effects.some((e) => e.type === "run_ended")).toBe(true);
+  });
+
+  it("takes the treasury and valuation from the ruleset, not a constant", () => {
+    // A sprint ruleset asking for a short runway was silently given the default one,
+    // so no experiment could actually vary the economics.
+    const lean = mergeRuleset({ economy: { initialTreasury: 1_000, initialValuation: 500 } });
+    let state = initialCorpState();
+    state = openProposal(
+      state,
+      { id: "p1", kind: "charter", title: "", rationale: "", proposerDid: A, payload: CHARTER },
+      ROSTER,
+    ).state;
+    for (const voter of [A, B, C, D, E, F, G]) {
+      state = castVote(state, "p1", voter, "yes", ROSTER, lean).state;
+    }
+    expect(state.treasury).toBe(1_000);
+    expect(state.valuation).toBe(500);
+  });
+
+  it("does not run payroll before there is a company", () => {
+    const result = runPayroll(initialCorpState(), true);
+    expect(result.effects).toHaveLength(0);
+  });
+
+  it("stops paying once the run is over", () => {
+    const ended = endAtHorizon(incorporated());
+    expect(ended.state.outcome?.kind).toBe("horizon");
+    // A closed record must not keep moving.
+    expect(runPayroll(ended.state, true).effects).toHaveLength(0);
+    expect(endAtHorizon(ended.state).effects).toHaveLength(0);
+  });
+
+  it("lets the participants wind the company up themselves", () => {
+    let state = incorporated();
+    state = openProposal(
+      state,
+      { id: "p-end", kind: "dissolve", title: "wind up", rationale: "", proposerDid: A, payload: { reason: "we are done" } },
+      ROSTER,
+    ).state;
+    state = castVote(state, "p-end", A, "yes", ROSTER).state;
+    const result = castVote(state, "p-end", C, "yes", ROSTER);
+    expect(result.state.outcome?.kind).toBe("dissolved");
+    expect(result.state.outcome?.summary).toContain("we are done");
   });
 });
 

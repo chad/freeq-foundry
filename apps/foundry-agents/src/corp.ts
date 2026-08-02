@@ -43,6 +43,7 @@
 export type Office = string;
 
 export type ProposalKind =
+  | "dissolve"
   | "charter"
   | "charter_amendment"
   | "officer"
@@ -91,6 +92,18 @@ export interface CorpState {
    * the tests run.
    */
   readonly expertise: ReadonlyMap<string, readonly string[]>;
+  /** Payrolls run so far. The company's age, in the only unit that costs anything. */
+  readonly payrolls: number;
+  /** Set once the run is over. No further state changes are accepted. */
+  readonly outcome?: RunOutcome;
+}
+
+/** How a run ended, and what it was worth when it did. */
+export interface RunOutcome {
+  readonly kind: "insolvent" | "dissolved" | "horizon";
+  readonly summary: string;
+  readonly valuation: number;
+  readonly payrolls: number;
 }
 
 export interface Proposal {
@@ -125,7 +138,9 @@ export type CorpEffect =
   | { readonly type: "proposal_passed"; readonly id: string }
   | { readonly type: "proposal_failed"; readonly id: string; readonly reason: string }
   // The registrar turns this into a capability grant event; equity buys tools, not actions.
-  | { readonly type: "grant"; readonly did: string; readonly namespace: string };
+  | { readonly type: "grant"; readonly did: string; readonly namespace: string }
+  | { readonly type: "payroll_run"; readonly cost: number; readonly balance: number; readonly payrolls: number }
+  | { readonly type: "run_ended"; readonly outcome: RunOutcome };
 
 import { DEFAULT_RULESET, type Ruleset } from "./ruleset.js";
 
@@ -146,6 +161,7 @@ export function initialCorpState(): CorpState {
     valuation: 0,
     completedWork: 0,
     expertise: new Map(),
+    payrolls: 0,
   };
 }
 
@@ -224,7 +240,8 @@ export function mayOpen(
         : { ok: false, reason: "only the CPO may select the product" };
     }
     default:
-      // officer, charter_amendment: anyone may force a vote. Coups are legal.
+      // officer, charter_amendment, dissolve: anyone may force a vote. Coups are legal,
+      // and so is proposing to wind the whole thing up.
       return { ok: true };
   }
 }
@@ -335,6 +352,10 @@ function validatePayload(
       return typeof payload["name"] === "string" && payload["name"].trim() !== ""
         ? { ok: true }
         : { ok: false, reason: "product needs a name" };
+    case "dissolve":
+      // Winding up needs no payload beyond a reason: the group is allowed to decide it
+      // is finished, and that is a legitimate ending rather than a failure.
+      return { ok: true };
     case "budget": {
       const delta = payload["delta"];
       if (typeof delta !== "number") return { ok: false, reason: "budget needs a numeric delta" };
@@ -430,7 +451,7 @@ export function castVote(
     // The electorate recorded at open time, not whoever happens to be present now.
     const total = proposal.electorate.length;
     const needed = Math.floor(total * ruleset.governance.charterMajority) + 1;
-    if (yes >= needed) return closePassed({ ...state, proposals: replaced(state, open) }, open);
+    if (yes >= needed) return closePassed({ ...state, proposals: replaced(state, open) }, open, ruleset);
     if (total - no < needed) {
       return closeFailed({ ...state, proposals: replaced(state, open) }, open, "majority of the twelve is unreachable");
     }
@@ -457,7 +478,7 @@ export function castVote(
   // means more than two-thirds — an exactly-tied vote deciding anything is a bug that
   // only ever shows up in a contested run.
   const passed = yesShares > issued * bar;
-  if (passed) return closePassed({ ...state, proposals: replaced(state, open) }, open);
+  if (passed) return closePassed({ ...state, proposals: replaced(state, open) }, open, ruleset);
 
   const possibleYes = yesShares + (issued - castShares);
   const doomed = possibleYes <= issued * bar;
@@ -473,7 +494,7 @@ function replaced(state: CorpState, proposal: Proposal): Map<string, Proposal> {
   return proposals;
 }
 
-function closePassed(state: CorpState, proposal: Proposal): VoteResult {
+function closePassed(state: CorpState, proposal: Proposal, ruleset: Ruleset = DEFAULT_RULESET): VoteResult {
   const closed = { ...proposal, status: "passed" as const };
   const proposals = replaced(state, closed);
   const base: CorpState = { ...state, proposals };
@@ -515,8 +536,11 @@ function closePassed(state: CorpState, proposal: Proposal): VoteResult {
           mission: String(p["mission"] ?? ""),
           sharesAuthorized: p["sharesAuthorized"] as number,
           shares,
-          treasury: INITIAL_TREASURY,
-          valuation: INITIAL_VALUATION,
+          // From the ruleset, not the module constant: a sprint ruleset that sets a
+          // smaller treasury was silently ignored, so every run had the default runway
+          // however the experiment was configured.
+          treasury: ruleset.economy.initialTreasury,
+          valuation: ruleset.economy.initialValuation,
         },
         effects,
       };
@@ -570,6 +594,15 @@ function closePassed(state: CorpState, proposal: Proposal): VoteResult {
     case "product": {
       effects.push({ type: "product_selected", name: String(p["name"]) });
       return { ok: true, state: { ...base, productName: String(p["name"]) }, effects };
+    }
+    case "dissolve": {
+      const outcome: RunOutcome = {
+        kind: "dissolved",
+        summary: String(p["reason"] ?? "the participants voted to wind up"),
+        valuation: state.valuation,
+        payrolls: state.payrolls,
+      };
+      return { ok: true, state: { ...base, outcome }, effects: [...effects, { type: "run_ended", outcome }] };
     }
     case "budget": {
       const delta = p["delta"] as number;
@@ -629,6 +662,55 @@ export function declareExpertise(
 }
 
 /**
+ * Run payroll.
+ *
+ * Every salary the group voted for is debited from the shared treasury. This is what
+ * turns compensation from a number in a proposal into a cost with consequences, and it
+ * is what gives the run a clock: the treasury is a runway, and the company has to become
+ * worth something before it ends.
+ */
+export function runPayroll(
+  state: CorpState,
+  endOnInsolvency: boolean,
+): { state: CorpState; effects: readonly CorpEffect[] } {
+  if (state.phase !== "incorporated" || state.outcome !== undefined) {
+    return { state, effects: [] };
+  }
+  let cost = 0;
+  for (const salary of state.comp.values()) cost += salary;
+
+  const balance = state.treasury - cost;
+  const payrolls = state.payrolls + 1;
+  const effects: CorpEffect[] = [{ type: "payroll_run", cost, balance, payrolls }];
+
+  if (balance < 0 && endOnInsolvency) {
+    const outcome: RunOutcome = {
+      kind: "insolvent",
+      summary: `payroll of $${cost.toLocaleString()} exceeded a treasury of $${state.treasury.toLocaleString()}`,
+      valuation: state.valuation,
+      payrolls,
+    };
+    return {
+      state: { ...state, treasury: balance, payrolls, outcome },
+      effects: [...effects, { type: "run_ended", outcome }],
+    };
+  }
+  return { state: { ...state, treasury: balance, payrolls }, effects };
+}
+
+/** End the run because the horizon was reached, whatever else is happening. */
+export function endAtHorizon(state: CorpState): { state: CorpState; effects: readonly CorpEffect[] } {
+  if (state.outcome !== undefined) return { state, effects: [] };
+  const outcome: RunOutcome = {
+    kind: "horizon",
+    summary: "the run reached its horizon",
+    valuation: state.valuation,
+    payrolls: state.payrolls,
+  };
+  return { state: { ...state, outcome }, effects: [{ type: "run_ended", outcome }] };
+}
+
+/**
  * Mark a work item complete. The first completion is the MVP milestone and re-values the
  * company; later ones do not. Simplicity is a feature: one dramatic jump, not a pricing
  * model pretending to precision.
@@ -637,6 +719,7 @@ export function completeWork(
   state: CorpState,
   id: string,
   did: string,
+  ruleset: Ruleset = DEFAULT_RULESET,
 ): { ok: boolean; reason?: string; state: CorpState; effects: readonly CorpEffect[] } {
   const item = state.workItems.get(id);
   if (item === undefined) return { ok: false, reason: `no work item ${id}`, state, effects: [] };
@@ -646,7 +729,7 @@ export function completeWork(
   const workItems = new Map(state.workItems);
   workItems.set(id, { ...item, status: "complete" });
   const isMvp = state.completedWork === 0;
-  const valuation = isMvp ? Math.max(state.valuation, MVP_VALUATION) : state.valuation;
+  const valuation = isMvp ? Math.max(state.valuation, ruleset.economy.mvpValuation) : state.valuation;
   return {
     ok: true,
     state: { ...state, workItems, valuation, completedWork: state.completedWork + 1 },

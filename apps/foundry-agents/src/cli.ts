@@ -545,7 +545,13 @@ async function main(): Promise<number> {
     const totalMicros = agents.reduce((sum, agent) => sum + agent.spentMicros, 0);
 
     console.log("");
+    const outcome = registrar.outcome;
     console.log("  ══ SCOREBOARD ══");
+    if (outcome !== undefined) {
+      console.log(`  ended: ${outcome.kind} — ${outcome.summary}`);
+      console.log(`  final valuation $${outcome.valuation.toLocaleString()} after ${outcome.payrolls} payroll(s)`);
+      console.log("");
+    }
     console.log(registrar.scoreboard(spendByDid));
     console.log("");
     console.log(`    events       ${log.events.length}`);
@@ -591,6 +597,16 @@ async function main(): Promise<number> {
   setInterval(() => {
     for (const agent of agents) agent.ensureConnected();
   }, 30_000);
+
+  // A run that has ended should stop, not idle. The grace period lets the final
+  // announcements reach the channel and lets agents react to the ending before their
+  // sockets close.
+  setInterval(() => {
+    const outcome = registrar.outcome;
+    if (outcome === undefined) return;
+    console.log(`\n  run ended — ${outcome.kind}: ${outcome.summary}`);
+    setTimeout(() => void shutdown(`run ended (${outcome.kind})`), 15_000);
+  }, 5_000).unref();
 
   process.once("SIGINT", () => void shutdown("SIGINT"));
   process.once("SIGTERM", () => void shutdown("SIGTERM"));
