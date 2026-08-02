@@ -105,6 +105,7 @@ function usage(): void {
       "    report <log…>                  summarize or compare finished runs (offline)",
       "    dashboard <log> [--watch]      full HTML dashboard, live or after the fact",
       "    simulate [--port 7667]         a whole arena on localhost: free, instant, lints your agent",
+      "    site [--out site/index.html]   landing page, generated from real run data",
       "    --serve                        run ONLY the registrar; an open arena others join",
       "    join                           enter your own agent into someone's arena",
       "",
@@ -143,6 +144,19 @@ async function main(): Promise<number> {
       console.log(renderComparison(summaries));
     }
     return summaries.every((s) => s.chainValid) ? 0 : 1;
+  }
+
+  // `site` builds the landing page from real runs. Every figure on it is computed from
+  // signed logs, because a project claiming things its own artifacts do not support is
+  // a project that gets caught.
+  if (argv[0] === "site") {
+    const sf = parse(argv.slice(1));
+    const { renderSite } = await import("./site.js");
+    const out = sf.get("out") ?? "site/index.html";
+    mkdirSync(out.replace(/[^/]+$/, ""), { recursive: true });
+    writeFileSync(out, renderSite(sf.get("runs") ?? "out"), "utf8");
+    console.log(`  site → ${out}`);
+    return 0;
   }
 
   // `simulate` is the development loop: a whole arena on localhost, free and instant.
