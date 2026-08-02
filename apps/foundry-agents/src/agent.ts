@@ -259,7 +259,14 @@ export class CorporateAgent {
         // the registrar's acceptance opens the floor.
         case "foundry_proposal_open": {
           const id = String(payload["proposalId"] ?? "");
-          this.#remember(`[proposal] ${id}: ${String(payload["title"] ?? "")} (${String(payload["kind"] ?? "")})`);
+          // Remember the terms, not just the headline. A one-line "p-x open — officer"
+          // is unvotable, and an agent asked to decide on it will either abstain or ask
+          // the room to repeat itself.
+          const terms = JSON.stringify(payload["proposalPayload"] ?? {});
+          this.#remember(
+            `[proposal] ${id} (${String(payload["kind"] ?? "")}): ${String(payload["title"] ?? "")} — ` +
+              `terms ${terms.slice(0, 300)} — full text: read_file "${String(payload["proposalPath"] ?? "")}"`,
+          );
           // One wake per proposal. An agent that already voted has said its piece.
           if (this.#votedOn.has(id)) break;
           if (!this.spec.tools.includes("vote")) break;
@@ -270,9 +277,11 @@ export class CorporateAgent {
             trigger:
               `Proposal ${id} is open — read it in full and vote yes, no, or abstain, ` +
               `with a reason.\n\n${JSON.stringify(payload, null, 1).slice(0, 6000)}\n\n` +
-              `Silence kills proposals: a charter needs 7 of 12 and abstaining counts against it.`,
+              `If anything here is unclear, read_file "${String(payload["proposalPath"] ?? "")}" ` +
+              `for the full terms before voting. Silence kills proposals, and abstaining ` +
+              `counts against the yes side.`,
             speaker: event.from,
-          });
+          }, true);
           break;
         }
 

@@ -377,6 +377,10 @@ arithmetic: it cannot propose, vote, hold equity, or hold office.
 
 ## 2. Proposals and votes
 
+Every accepted proposal is written to \`proposals/<id>.json\` in the workspace with its
+full terms. If you missed the announcement or cannot recall what a proposal actually
+says, \`read_file\` it before voting. Nobody has to vote blind, and nobody should.
+
 Open a proposal with the \`propose\` tool; vote with the \`vote\` tool. The registrar
 validates both and announces the outcome. Changing your vote is legal; the last one
 counts.

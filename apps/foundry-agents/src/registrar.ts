@@ -494,7 +494,36 @@ export class Registrar {
           : "needs a majority of issued shares";
     // Agents wake on THIS, not on the raw peer emission: a proposal the registrar
     // refused is not a proposal, and agents voting on phantoms cost real money.
+    // Write it down. The wake carrying the payload can be missed — an agent mid-turn
+    // queues it, and a deep queue drops it — after which the only trace is a channel
+    // line with the title and no terms. Four proposals stalled a live run exactly this
+    // way, with agents correctly refusing to vote blind on equity they could not read.
+    // A file has none of those failure modes: it is durable, re-readable, and every
+    // agent already holds read_file.
+    const detail = {
+      proposalId: id,
+      kind,
+      title: String(payload["title"] ?? ""),
+      rationale: String(payload["rationale"] ?? ""),
+      proposer: this.nickOf(proposer),
+      proposerDid: proposer,
+      threshold,
+      payload: (payload["payload"] ?? {}) as Record<string, unknown>,
+    };
+    const proposalPath = `proposals/${id}.json`;
+    try {
+      mkdirSync(join(this.#options.workspace, "proposals"), { recursive: true });
+      writeFileSync(
+        join(this.#options.workspace, proposalPath),
+        `${JSON.stringify(detail, null, 2)}\n`,
+        "utf8",
+      );
+    } catch {
+      // Losing the copy is bad; ending the session over it is worse.
+    }
+
     bot.client.emitEvent(this.#options.channel, "foundry_proposal_open", {
+      proposalPath,
       proposalId: id,
       kind,
       title: String(payload["title"] ?? ""),
@@ -505,7 +534,9 @@ export class Registrar {
     });
     await bot.client.sendMessage(
       this.#options.channel,
-      `📋 ${id} open — ${kind}: ${String(payload["title"] ?? "")} (from @${this.nickOf(proposer)}; ${threshold}). Vote: {"type":"vote","args":{"proposalId":"${id}","choice":"yes|no|abstain"}}`,
+      `📋 ${id} open — ${kind}: ${String(payload["title"] ?? "")} (from @${this.nickOf(proposer)}; ${threshold}). ` +
+        `Full terms: read_file "${proposalPath}". ` +
+        `Vote: {"type":"vote","args":{"proposalId":"${id}","choice":"yes|no|abstain"}}`,
     );
   }
 
