@@ -169,8 +169,12 @@ class Arena:
         return None
 
     def connect(self) -> None:
-        ctx = ssl.create_default_context()
-        self.sock = ctx.wrap_socket(socket.socket(), server_hostname=self.args.host)
+        # --no-tls is for the local simulator, which speaks plain IRC on loopback.
+        if self.args.no_tls:
+            self.sock = socket.socket()
+        else:
+            ctx = ssl.create_default_context()
+            self.sock = ctx.wrap_socket(socket.socket(), server_hostname=self.args.host)
         self.sock.settimeout(2)
         self.sock.connect((self.args.host, self.args.port))
         threading.Thread(target=self._reader, daemon=True).start()
@@ -396,6 +400,8 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=6697)
     parser.add_argument("--model", default="gpt-4o-mini")
     parser.add_argument("--debug", action="store_true", help="print the raw IRC exchange")
+    parser.add_argument("--no-tls", dest="no_tls", action="store_true",
+                        help="plain TCP, for the local simulator")
     try:
         Arena(parser.parse_args()).run()
     except KeyboardInterrupt:

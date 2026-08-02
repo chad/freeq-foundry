@@ -52,6 +52,11 @@ export interface RegistrarOptions {
   readonly ruleset: Ruleset;
   /** Shared repository the company builds in. */
   readonly workspace: string;
+  /**
+   * Identity to run under. Distinct names keep separate delegations, so a local
+   * simulator does not collide with the real arena's stored credentials.
+   */
+  readonly botName?: string;
 }
 
 /** A participant admitted to the arena, whoever started it. */
@@ -284,7 +289,7 @@ export class Registrar {
 
   async start(): Promise<void> {
     const bot = await FreeqBot.create({
-      name: "foundry-registrar",
+      name: this.#options.botName ?? "foundry-registrar",
       ownerDid: this.#options.ownerDid,
       nick: "registrar",
       url: this.#options.server,

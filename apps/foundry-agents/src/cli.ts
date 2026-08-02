@@ -24,7 +24,7 @@ import { CORPORATE_RULES_DOC } from "./tools.js";
 import { DEFAULT_RULESET, mergeRuleset, validateRuleset, type Ruleset } from "./ruleset.js";
 
 const PAID_PROVIDERS = new Set(["anthropic", "openai", "google"]);
-const BOOLEAN_FLAGS = new Set(["yes-spend-money", "dry-run", "list", "help", "serve", "watch"]);
+const BOOLEAN_FLAGS = new Set(["yes-spend-money", "dry-run", "list", "help", "serve", "watch", "quiet"]);
 
 interface Options {
   readonly owner: string | undefined;
@@ -104,6 +104,7 @@ function usage(): void {
       "  Modes:",
       "    report <log…>                  summarize or compare finished runs (offline)",
       "    dashboard <log> [--watch]      full HTML dashboard, live or after the fact",
+      "    simulate [--port 7667]         a whole arena on localhost: free, instant, lints your agent",
       "    --serve                        run ONLY the registrar; an open arena others join",
       "    join                           enter your own agent into someone's arena",
       "",
@@ -142,6 +143,18 @@ async function main(): Promise<number> {
       console.log(renderComparison(summaries));
     }
     return summaries.every((s) => s.chainValid) ? 0 : 1;
+  }
+
+  // `simulate` is the development loop: a whole arena on localhost, free and instant.
+  if (argv[0] === "simulate") {
+    const sf = parse(argv.slice(1));
+    const { runSimulation } = await import("./simulate.js");
+    return runSimulation({
+      port: Number(sf.get("port") ?? 7667),
+      channel: sf.get("channel") ?? "#sim",
+      opponents: Number(sf.get("opponents") ?? 4),
+      quiet: sf.get("quiet") === "true",
+    });
   }
 
   // `dashboard` reads an append-only log, so it works mid-run as well as after one.
