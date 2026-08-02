@@ -24,7 +24,7 @@ import { CORPORATE_RULES_DOC } from "./tools.js";
 import { DEFAULT_RULESET, mergeRuleset, validateRuleset, type Ruleset } from "./ruleset.js";
 
 const PAID_PROVIDERS = new Set(["anthropic", "openai", "google"]);
-const BOOLEAN_FLAGS = new Set(["yes-spend-money", "dry-run", "list", "help", "serve"]);
+const BOOLEAN_FLAGS = new Set(["yes-spend-money", "dry-run", "list", "help", "serve", "watch"]);
 
 interface Options {
   readonly owner: string | undefined;
@@ -103,6 +103,7 @@ function usage(): void {
       "",
       "  Modes:",
       "    report <log…>                  summarize or compare finished runs (offline)",
+      "    dashboard <log> [--watch]      full HTML dashboard, live or after the fact",
       "    --serve                        run ONLY the registrar; an open arena others join",
       "    join                           enter your own agent into someone's arena",
       "",
@@ -141,6 +142,38 @@ async function main(): Promise<number> {
       console.log(renderComparison(summaries));
     }
     return summaries.every((s) => s.chainValid) ? 0 : 1;
+  }
+
+  // `dashboard` reads an append-only log, so it works mid-run as well as after one.
+  if (argv[0] === "dashboard") {
+    const { loadRun } = await import("./research.js");
+    const { renderDashboard } = await import("./dashboard.js");
+    const rest = argv.slice(1);
+    const input = rest.find((a) => !a.startsWith("--"));
+    if (input === undefined) {
+      console.error("\n  foundry-agent dashboard <events.ndjson> [--out run.html] [--watch]\n");
+      return 2;
+    }
+    const flagsD = parse(rest);
+    const out = flagsD.get("out") ?? input.replace(/[^/]+$/, "dashboard.html");
+    const write = (): void => {
+      writeFileSync(out, renderDashboard(loadRun(input)), "utf8");
+    };
+    write();
+    console.log(`  dashboard → ${out}`);
+    if (flagsD.get("watch") === "true") {
+      console.log("  watching; regenerating every 15s. Ctrl+C to stop.");
+      setInterval(() => {
+        try {
+          write();
+          process.stdout.write(`\r  updated ${new Date().toISOString().slice(11, 19)}`);
+        } catch {
+          // A half-written line at the tail of a live log is normal; try again shortly.
+        }
+      }, 15_000);
+      await new Promise<void>(() => undefined);
+    }
+    return 0;
   }
 
   // `join` is its own front door: entering someone else's arena has nothing to do with
