@@ -39,6 +39,7 @@ import {
 import type { FoundryLog } from "./log.js";
 import type { AgentSpec } from "./roster.js";
 import type { Ruleset } from "./ruleset.js";
+import { emitSilent, emitSilentSized, Reassembler } from "./wire.js";
 
 export interface RegistrarOptions {
   readonly ownerDid: string;
@@ -179,6 +180,7 @@ export class Registrar {
   readonly #sandbox = new NodeSubprocessSandbox();
   /** emitEvent sends TAGMSG *and* PRIVMSG; without this every proposal opens twice. */
   readonly #seenEvents = new Set<string>();
+  readonly #reassembler = new Reassembler();
   /** Partially received files, keyed by did:path. */
   readonly #partials = new Map<string, string[]>();
   /** Capabilities the registrar has granted, so it can enforce them on wire writes. */
@@ -332,7 +334,7 @@ export class Registrar {
     // payloads all address participants by DID. Without it agents write nicks, the
     // registrar refuses every proposal, and the company can never form. A live run
     // burned thirteen refusals proving it.
-    bot.client.emitEvent(this.#options.channel, "foundry_kickoff", {
+    emitSilent(bot.client, this.#options.channel, "foundry_kickoff", {
       roster: [...this.#participants.values()].map((p) => p.nick),
       directory: Object.fromEntries([...this.#participants.values()].map((p) => [p.nick, p.did])),
       participants: [...this.#participants.values()].map((p) => ({
@@ -564,7 +566,8 @@ export class Registrar {
     const size = 1200;
     const total = Math.max(1, Math.ceil(body.length / size));
     for (let seq = 0; seq < total; seq++) {
-      bot.client.emitEvent(this.#options.channel, eventType, {
+      // Chunked replies are pure transport: a forty-part card storm helps nobody.
+      emitSilent(bot.client, this.#options.channel, eventType, {
         ...base,
         seq,
         total,
@@ -577,7 +580,7 @@ export class Registrar {
   async #broadcastDirectory(): Promise<void> {
     const bot = this.#bot;
     if (bot === undefined) return;
-    bot.client.emitEvent(this.#options.channel, "foundry_directory", {
+    emitSilentSized(bot.client, this.#options.channel, "foundry_directory", {
       directory: Object.fromEntries([...this.#participants.values()].map((p) => [p.nick, p.did])),
       participants: [...this.#participants.values()].map((p) => ({
         nick: p.nick,
@@ -701,7 +704,7 @@ export class Registrar {
       // Losing the copy is bad; ending the session over it is worse.
     }
 
-    bot.client.emitEvent(this.#options.channel, "foundry_proposal_open", {
+    emitSilentSized(bot.client, this.#options.channel, "foundry_proposal_open", {
       proposalPath,
       proposalId: id,
       kind,
@@ -806,7 +809,7 @@ export class Registrar {
     if (bot === undefined) return;
     const ch = this.#options.channel;
     // Agents wake on effects that concern them — being seated, paid, diluted, assigned.
-    bot.client.emitEvent(ch, "foundry_effect", { ...(effect as unknown as Record<string, unknown>), proposalId });
+    emitSilent(bot.client, ch, "foundry_effect", { ...(effect as unknown as Record<string, unknown>), proposalId });
     const say = async (line: string): Promise<void> => {
       await bot.client.sendMessage(ch, line);
     };
@@ -898,7 +901,7 @@ export class Registrar {
         this.#granted.set(effect.did, held);
         // The only power that touches agents directly. Agents listen for this event and
         // unlock the tool.
-        bot.client.emitEvent(ch, "foundry_grant", {
+        emitSilent(bot.client, ch, "foundry_grant", {
           toDid: effect.did,
           namespace: effect.namespace,
           basis: proposalId,
@@ -942,7 +945,7 @@ export class Registrar {
     const bot = this.#bot;
     if (bot === undefined) return;
     const state = this.#state;
-    bot.client.emitEvent(this.#options.channel, "foundry_state", {
+    emitSilentSized(bot.client, this.#options.channel, "foundry_state", {
       phase: state.phase,
       company: state.companyName ?? null,
       valuation: state.valuation,

@@ -38,6 +38,7 @@ import { describeTools, runTool, type ToolContext, type ToolName, type ToolResul
 import { manifestFor, type AgentSpec } from "./roster.js";
 import { FOUNDER_BRIEF } from "./dispositions.js";
 import { DEFAULT_RULESET, type Ruleset } from "./ruleset.js";
+import { emitSilent, emitSilentSized, Reassembler } from "./wire.js";
 import { geminiAdapter } from "./gemini.js";
 import type { FoundryLog } from "./log.js";
 
@@ -94,6 +95,7 @@ export class CorporateAgent {
   #linkUp = true;
   /** Chunked replies being reassembled, keyed by want:id. */
   readonly #replies = new Map<string, string[]>();
+  readonly #reassembler = new Reassembler();
   /** Last `foundry_state` broadcast, verbatim — the agent's picture of the company. */
   #corpState: Record<string, unknown> = {};
   /** nick -> DID, published by the registrar. */
@@ -190,9 +192,11 @@ export class CorporateAgent {
         if (this.#seenEvents.has(event.eventId)) return;
         this.#seenEvents.add(event.eventId);
       }
-      const payload = (event.payload ?? {}) as Record<string, unknown>;
+      const whole = this.#reassembler.accept(event.eventType, (event.payload ?? {}) as Record<string, unknown>);
+      if (whole === undefined) return;
+      const payload = whole.payload;
 
-      switch (event.eventType) {
+      switch (whole.eventType) {
         case "foundry_kickoff": {
           const directory = payload["directory"];
           if (directory !== null && typeof directory === "object") {
@@ -377,14 +381,14 @@ export class CorporateAgent {
   announceJoin(ownerDid: string): void {
     const bot = this.#bot;
     if (bot === undefined) return;
-    bot.client.emitEvent(this.#options.channel, "foundry_join", {
+    emitSilent(bot.client, this.#options.channel, "foundry_join", {
       did: this.did,
       nick: this.spec.nick,
       ownerDid,
       provider: this.spec.provider,
       snapshot: this.spec.snapshot,
       tools: this.spec.tools,
-    }, { humanText: `🎟 @${this.spec.nick} requests admission` });
+    });
   }
 
   /** True when the agent is between turns and could act. */
@@ -628,9 +632,10 @@ export class CorporateAgent {
           payload: (detail["payload"] ?? {}) as Record<string, unknown>,
           proposer: this.did,
         };
-        bot.client.emitEvent(this.#options.channel, "foundry_proposal", payload, {
-          humanText: `📋 ${payload.kind}: ${payload.title}`,
-        });
+        // Machine-only: the registrar announces the proposal in prose once it has been
+        // validated. An agent's own card announcing an unvalidated proposal was the
+        // second of three renderings of the same fact.
+        emitSilent(bot.client, this.#options.channel, "foundry_proposal", payload);
         this.#options.log.record(this.did, "governance.proposal_opened", payload);
         break;
       }
@@ -645,21 +650,18 @@ export class CorporateAgent {
           rationale: String(detail["rationale"] ?? ""),
           voter: this.did,
         };
-        bot.client.emitEvent(this.#options.channel, "foundry_vote", payload, {
-          refId: proposalId,
-          humanText: `🗳 ${payload.choice} on ${proposalId}`,
-        });
+        emitSilent(bot.client, this.#options.channel, "foundry_vote", payload, { refId: proposalId });
         this.#options.log.record(this.did, "governance.vote_cast", payload);
         break;
       }
 
       case "declare": {
         const areas = (effect.detail["expertise"] as unknown[]).map((a) => String(a));
-        bot.client.emitEvent(this.#options.channel, "foundry_declare", {
+        emitSilent(bot.client, this.#options.channel, "foundry_declare", {
           did: this.did,
           expertise: areas,
           focus: String(effect.detail["focus"] ?? ""),
-        }, { humanText: `🎓 ${this.spec.nick} declares: ${areas.join(", ")}` });
+        });
         this.#options.log.record(this.did, "admission.expertise_declared", {
           expertise: areas,
           focus: effect.detail["focus"],
@@ -668,12 +670,10 @@ export class CorporateAgent {
       }
 
       case "submit_work":
-        bot.client.emitEvent(this.#options.channel, "foundry_work_submitted", {
+        emitSilent(bot.client, this.#options.channel, "foundry_work_submitted", {
           workId: String(effect.detail["workId"] ?? ""),
           assignee: this.did,
           testsPassed: this.#lastTestsPassed,
-        }, {
-          humanText: `📬 ${this.spec.nick} submits ${String(effect.detail["workId"])}`,
         });
         this.#options.log.record(this.did, "work.completed", {
           workId: effect.detail["workId"],
@@ -690,13 +690,13 @@ export class CorporateAgent {
         const size = 1200;
         const total = Math.max(1, Math.ceil(content.length / size));
         for (let seq = 0; seq < total; seq++) {
-          bot.client.emitEvent(this.#options.channel, "foundry_file_put", {
+          emitSilent(bot.client, this.#options.channel, "foundry_file_put", {
             did: this.did,
             path,
             seq,
             total,
             chunk: content.slice(seq * size, (seq + 1) * size),
-          }, seq === 0 ? { humanText: `📝 publishing ${path} (${content.length} bytes)` } : {});
+          });
         }
         this.#options.log.record(this.did, "repository.commit_created", {
           path,
@@ -708,20 +708,18 @@ export class CorporateAgent {
       }
 
       case "ask": {
-        bot.client.emitEvent(this.#options.channel, "foundry_query", {
+        emitSilent(bot.client, this.#options.channel, "foundry_query", {
           did: this.did,
           want: String(effect.detail["want"] ?? "proposal"),
           id: String(effect.detail["id"] ?? ""),
-        }, { humanText: `❓ ${this.spec.nick} asks for ${String(effect.detail["id"] ?? "")}` });
+        });
         break;
       }
 
       case "tests_run": {
         const passed = effect.detail["outcome"] === "succeeded";
         this.#lastTestsPassed = passed;
-        bot.client.emitEvent(this.#options.channel, "foundry_ci", effect.detail, {
-          humanText: `🧪 tests ${String(effect.detail["outcome"])}`,
-        });
+        emitSilent(bot.client, this.#options.channel, "foundry_ci", effect.detail);
         this.#options.log.record(this.did, "ci.completed", effect.detail);
         break;
       }
