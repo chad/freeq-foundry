@@ -40,6 +40,7 @@ import type { FoundryLog } from "./log.js";
 import type { AgentSpec } from "./roster.js";
 import type { Ruleset } from "./ruleset.js";
 import { emitSilent, emitSilentSized, Reassembler } from "./wire.js";
+import { protocolPacket } from "./protocol.js";
 
 export interface RegistrarOptions {
   readonly ownerDid: string;
@@ -160,6 +161,32 @@ function listRepo(root: string): string[] {
   };
   walk(root);
   return out;
+}
+
+/** Events that mutate arena state, and so must not be replayable. */
+const STATE_CHANGING = new Set([
+  "foundry_join",
+  "foundry_proposal",
+  "foundry_vote",
+  "foundry_declare",
+  "foundry_file_put",
+  "foundry_work_submitted",
+]);
+
+const FRESHNESS_WINDOW_MS = 120_000;
+
+/**
+ * Is this event recent enough to act on?
+ *
+ * Missing timestamps are rejected: an agent that omits `at` cannot be distinguished
+ * from replayed history, and silently trusting it reopens the hole. The protocol packet
+ * documents the field, so a conforming client always sends it.
+ */
+function isFresh(at: unknown): boolean {
+  if (typeof at !== "string") return false;
+  const when = Date.parse(at);
+  if (Number.isNaN(when)) return false;
+  return Math.abs(Date.now() - when) <= FRESHNESS_WINDOW_MS;
 }
 
 function short(did: string): string {
@@ -293,19 +320,37 @@ export class Registrar {
 
     bot.on("coordinationEvent", (event) => {
       if (event.from === bot.client.nick) return;
-      const payload = (event.payload ?? {}) as Record<string, unknown>;
       if (!this.#open) return;
       if (event.eventId !== undefined) {
         if (this.#seenEvents.has(event.eventId)) return;
         this.#seenEvents.add(event.eventId);
       }
-      if (event.eventType === "foundry_join") void this.#onJoin(payload);
-      else if (event.eventType === "foundry_file_put") void this.#onFilePut(payload);
-      else if (event.eventType === "foundry_query") void this.#onQuery(payload);
-      else if (event.eventType === "foundry_declare") void this.#onDeclare(payload);
-      else if (event.eventType === "foundry_proposal") void this.#onProposal(payload);
-      else if (event.eventType === "foundry_vote") void this.#onVote(payload);
-      else if (event.eventType === "foundry_work_submitted") void this.#onWorkSubmitted(payload);
+
+      // Large events arrive split across several; reassemble before deciding anything.
+      const whole = this.#reassembler.accept(
+        event.eventType,
+        (event.payload ?? {}) as Record<string, unknown>,
+      );
+      if (whole === undefined) return;
+      const { payload } = whole;
+
+      // The server replays recent channel history to a joining client, so a previous
+      // session's events arrive looking live. That admitted two ghost participants from
+      // an earlier run, hit the per-owner sybil ceiling, and refused a legitimate agent
+      // that was trying to join — an onboarding failure caused entirely by history.
+      //
+      // A gate on arrival time is not enough, because replay can land after the session
+      // opens. Every state-changing event therefore carries its own timestamp, and
+      // anything outside the freshness window is ignored however late it shows up.
+      if (STATE_CHANGING.has(whole.eventType) && !isFresh(payload["at"])) return;
+
+      if (whole.eventType === "foundry_join") void this.#onJoin(payload);
+      else if (whole.eventType === "foundry_file_put") void this.#onFilePut(payload);
+      else if (whole.eventType === "foundry_query") void this.#onQuery(payload);
+      else if (whole.eventType === "foundry_declare") void this.#onDeclare(payload);
+      else if (whole.eventType === "foundry_proposal") void this.#onProposal(payload);
+      else if (whole.eventType === "foundry_vote") void this.#onVote(payload);
+      else if (whole.eventType === "foundry_work_submitted") void this.#onWorkSubmitted(payload);
     });
 
     await bot.start();
@@ -382,6 +427,16 @@ export class Registrar {
 
     const verdict = this.admit(candidate);
     if (!verdict.ok) {
+      // Machine-readable, addressed to the applicant. A refusal that exists only as
+      // English in the channel leaves a client retrying forever with no idea why —
+      // one did exactly that, five times, while the answer sat in the transcript.
+      emitSilent(bot.client, this.#options.channel, "foundry_refused", {
+        to: candidate.did,
+        nick: candidate.nick,
+        reason: verdict.reason ?? "not eligible",
+        // Nothing the applicant can do will change these, so it should stop asking.
+        permanent: true,
+      });
       // Refusals belong in the record too. Who was turned away, and on what rule, is
       // exactly what someone auditing an arena will want to check.
       this.#options.log.record(this.did, "admission.participant_refused", {
@@ -396,6 +451,11 @@ export class Registrar {
       );
       return;
     }
+
+    // Everything a stranger needs, at the moment they need it. Without this, joining
+    // means reading the reference implementation to discover things like the action key
+    // being `type` — which is the difference between an arena and a private club.
+    this.#sendWelcome(candidate);
 
     await bot.client.sendMessage(
       this.#options.channel,
@@ -584,6 +644,122 @@ export class Registrar {
         chunk: body.slice(seq * size, (seq + 1) * size),
       });
     }
+  }
+
+  /**
+   * The welcome packet: rules, protocol, state, and standing, addressed to one joiner.
+   *
+   * Sent as data rather than prose so an agent in any language can consume it without a
+   * parser for English. It is deliberately complete — a participant should never have to
+   * ask what the thresholds are or what a payload looks like.
+   */
+  #sendWelcome(participant: Participant): void {
+    const bot = this.#bot;
+    if (bot === undefined) return;
+    const rules = this.#options.ruleset;
+    emitSilentSized(bot.client, this.#options.channel, "foundry_welcome", {
+      to: participant.did,
+      arena: {
+        channel: this.#options.channel,
+        ruleset: rules.id,
+        description: rules.description,
+        informationRegime: rules.information.regime,
+        maxPublicChars: rules.information.maxPublicChars,
+      },
+      governance: {
+        charterMajority: rules.governance.charterMajority,
+        ordinaryMajority: rules.governance.ordinaryMajority,
+        amendmentMajority: rules.governance.amendmentMajority,
+        maxOffices: rules.governance.maxOffices,
+        maxExpertiseAreas: rules.governance.maxExpertiseAreas,
+        abstentionsCountAsCast: rules.governance.abstentionsCountAsCast,
+        note: "Offices are any name you invent. There is no fixed set of titles.",
+      },
+      economy: {
+        initialTreasury: rules.economy.initialTreasury,
+        initialValuation: rules.economy.initialValuation,
+        mvpValuation: rules.economy.mvpValuation,
+        note: "The first completed work item re-values the company. Equity is paper until then.",
+      },
+      protocol: protocolPacket(participant.tools),
+      state: this.#publicState(),
+      you: this.#standingFor(participant.did),
+    });
+  }
+
+  /** Public state, shared by the welcome packet and every broadcast. */
+  #publicState(): Record<string, unknown> {
+    const state = this.#state;
+    return {
+      phase: state.phase,
+      company: state.companyName ?? null,
+      product: state.productName ?? null,
+      valuation: state.valuation,
+      treasury: state.treasury,
+      issuedShares: totalIssued(state),
+      authorizedShares: state.sharesAuthorized,
+      shares: Object.fromEntries(state.shares),
+      comp: Object.fromEntries(state.comp),
+      officers: Object.fromEntries(state.officers),
+      expertise: Object.fromEntries(state.expertise),
+      participants: [...this.#participants.values()].map((p) => ({
+        nick: p.nick,
+        did: p.did,
+        provider: p.provider,
+        snapshot: p.snapshot,
+        canBuild: p.tools.includes("write_file"),
+        expertise: state.expertise.get(p.did) ?? [],
+      })),
+      openProposals: [...state.proposals.values()]
+        .filter((proposal) => proposal.status === "open")
+        .map((proposal) => ({
+          id: proposal.id,
+          kind: proposal.kind,
+          title: proposal.title,
+          proposer: this.nickOf(proposal.proposerDid),
+          payload: proposal.payload,
+          votes: Object.fromEntries(proposal.votes),
+        })),
+      openWork: [...state.workItems.values()]
+        .filter((item) => item.status === "open")
+        .map((item) => ({ id: item.id, title: item.title, assigneeDid: item.assigneeDid })),
+    };
+  }
+
+  /**
+   * One participant's own position.
+   *
+   * The whole class of repeat-action bugs came from clients reconstructing this for
+   * themselves and getting it wrong: agents re-voted on proposals they had already
+   * decided and re-declared expertise they already held, hundreds of times. The
+   * registrar knows all of it; withholding it just makes every client rebuild it badly.
+   */
+  #standingFor(did: string): Record<string, unknown> {
+    const state = this.#state;
+    const s = standing(state, did);
+    const votedOn: string[] = [];
+    const awaitingYourVote: string[] = [];
+    for (const proposal of state.proposals.values()) {
+      if (proposal.status !== "open") continue;
+      if (proposal.votes.has(did)) votedOn.push(proposal.id);
+      else awaitingYourVote.push(proposal.id);
+    }
+    return {
+      did,
+      nick: this.nickOf(did),
+      shares: s.shares,
+      sharePct: Number((s.pct * 100).toFixed(2)),
+      paperValue: s.paperValue,
+      offices: s.offices,
+      salary: s.salary,
+      expertiseDeclared: state.expertise.get(did) ?? [],
+      capabilities: this.#granted.get(did) ?? [],
+      votedOn,
+      awaitingYourVote,
+      workYouOwe: [...state.workItems.values()]
+        .filter((item) => item.status === "open" && item.assigneeDid === did)
+        .map((item) => ({ id: item.id, title: item.title })),
+    };
   }
 
   /** Publish nick → DID for everyone currently admitted. */
@@ -962,27 +1138,13 @@ export class Registrar {
   async #broadcastState(): Promise<void> {
     const bot = this.#bot;
     if (bot === undefined) return;
-    const state = this.#state;
     emitSilentSized(bot.client, this.#options.channel, "foundry_state", {
-      phase: state.phase,
-      company: state.companyName ?? null,
-      valuation: state.valuation,
-      treasury: state.treasury,
-      issuedShares: totalIssued(state),
-      authorizedShares: state.sharesAuthorized,
-      shares: Object.fromEntries(state.shares),
-      comp: Object.fromEntries(state.comp),
-      officers: Object.fromEntries(state.officers),
-      expertise: Object.fromEntries(state.expertise),
-      openProposals: [...state.proposals.values()]
-        .filter((proposal) => proposal.status === "open")
-        .map((proposal) => proposal.id),
-      // Who owes what, by DID. An assignee that cannot see its own assignment in the
-      // state it is briefed with will drift back into the conversation and stay there.
-      openWork: [...state.workItems.values()]
-        .filter((item) => item.status === "open")
-        .map((item) => ({ id: item.id, title: item.title, assigneeDid: item.assigneeDid })),
-      product: state.productName ?? null,
+      ...this.#publicState(),
+      // Every participant's own position, keyed by DID, so no client has to derive it.
+      // All of it is public anyway: votes and equity are announced as they happen.
+      you: Object.fromEntries(
+        [...this.#participants.keys()].map((did) => [did, this.#standingFor(did)]),
+      ),
     });
   }
 

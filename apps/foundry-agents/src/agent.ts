@@ -34,7 +34,8 @@ import {
   type ModelMessage,
 } from "@freeq-foundry/model-adapters";
 import { NodeSubprocessSandbox } from "@freeq-foundry/sandbox";
-import { describeTools, runTool, type ToolContext, type ToolName, type ToolResult } from "./tools.js";
+import { runTool, type ToolContext, type ToolName, type ToolResult } from "./tools.js";
+import { renderActions, RESPONSE_CONTRACT } from "./protocol.js";
 import { manifestFor, type AgentSpec } from "./roster.js";
 import { FOUNDER_BRIEF } from "./dispositions.js";
 import { DEFAULT_RULESET, type Ruleset } from "./ruleset.js";
@@ -98,6 +99,8 @@ export class CorporateAgent {
   readonly #reassembler = new Reassembler();
   /** Last `foundry_state` broadcast, verbatim — the agent's picture of the company. */
   #corpState: Record<string, unknown> = {};
+  /** The welcome packet: rules and protocol, served by the arena on admission. */
+  #welcome: Record<string, unknown> = {};
   /** nick -> DID, published by the registrar. */
   #directory: Record<string, string> = {};
   /** Everyone currently admitted — including agents other people entered. */
@@ -219,9 +222,19 @@ export class CorporateAgent {
           break;
         }
 
-        case "foundry_state":
+        case "foundry_welcome": {
+          if (payload["to"] !== this.did) break;
+          // Everything needed to play, from the platform rather than from my source.
+          this.#welcome = payload;
+          const state = payload["state"];
+          if (state !== null && typeof state === "object") this.#corpState = state as Record<string, unknown>;
+          break;
+        }
+
+        case "foundry_state": {
           this.#corpState = payload;
           break;
+        }
 
         case "foundry_reply": {
           if (payload["to"] !== this.did) break;
@@ -382,6 +395,7 @@ export class CorporateAgent {
     const bot = this.#bot;
     if (bot === undefined) return;
     emitSilent(bot.client, this.#options.channel, "foundry_join", {
+      at: new Date().toISOString(),
       did: this.did,
       nick: this.spec.nick,
       ownerDid,
@@ -625,6 +639,7 @@ export class CorporateAgent {
         const detail = effect.detail;
         const proposalId = `p-${Date.now().toString(36)}-${Math.floor(Math.random() * 1679616).toString(36)}`;
         const payload = {
+          at: new Date().toISOString(),
           proposalId,
           kind: String(detail["kind"] ?? ""),
           title: String(detail["title"] ?? "untitled"),
@@ -645,6 +660,7 @@ export class CorporateAgent {
         const proposalId = String(detail["proposalId"] ?? "");
         this.#votedOn.add(proposalId);
         const payload = {
+          at: new Date().toISOString(),
           proposalId,
           choice: String(detail["choice"] ?? "abstain"),
           rationale: String(detail["rationale"] ?? ""),
@@ -658,6 +674,7 @@ export class CorporateAgent {
       case "declare": {
         const areas = (effect.detail["expertise"] as unknown[]).map((a) => String(a));
         emitSilent(bot.client, this.#options.channel, "foundry_declare", {
+      at: new Date().toISOString(),
           did: this.did,
           expertise: areas,
           focus: String(effect.detail["focus"] ?? ""),
@@ -671,6 +688,7 @@ export class CorporateAgent {
 
       case "submit_work":
         emitSilent(bot.client, this.#options.channel, "foundry_work_submitted", {
+      at: new Date().toISOString(),
           workId: String(effect.detail["workId"] ?? ""),
           assignee: this.did,
           testsPassed: this.#lastTestsPassed,
@@ -691,6 +709,7 @@ export class CorporateAgent {
         const total = Math.max(1, Math.ceil(content.length / size));
         for (let seq = 0; seq < total; seq++) {
           emitSilent(bot.client, this.#options.channel, "foundry_file_put", {
+      at: new Date().toISOString(),
             did: this.did,
             path,
             seq,
@@ -784,50 +803,39 @@ export class CorporateAgent {
       `- The rules are in CORPORATION.md (read_file "CORPORATION.md"). The registrar`,
       `  enforces them exactly. Agents who misstate the rules get corrected in public.`,
       "",
-      "Your tools:",
-      describeTools(this.#effectiveTools()),
+      "Your actions — these exact shapes, generated from the arena's own protocol:",
+      renderActions(this.#effectiveTools()),
       "",
-      'Reply with exactly one JSON object: {"reasoning":"<one or two sentences, spoken',
-      'aloud>","actions":[{"type":"<tool name>","args":{…}}]}',
-      'The key is "type" — not "tool". An action without a string "type" is discarded.',
+      `Reply with exactly one JSON object: ${RESPONSE_CONTRACT.shape}`,
+      ...RESPONSE_CONTRACT.rules.map((rule) => `  - ${rule}`),
       ...(this.#effectiveTools().includes("write_file")
-        ? [
-            "",
-            "WRITING CODE — escaping a whole source file inside JSON fails often, so use",
-            "this instead. Set content to exactly <<<FILE>>> and append the raw file after",
-            "the JSON, between markers:",
-            '  {"reasoning":"shipping the core module","actions":[{"type":"write_file",',
-            '   "args":{"path":"src/core.mjs","content":"<<<FILE>>>"}},{"type":"run_tests","args":{}}]}',
-            "  <<<FILE>>>",
-            "  export function score(x) { return x * 2; }",
-            "  <<<END>>>",
-            "The file goes in raw — no quotes, no escaping, no code fences.",
-          ]
+        ? ["", `WRITING CODE — ${RESPONSE_CONTRACT.rawFileEscape.why}`,
+           RESPONSE_CONTRACT.rawFileEscape.how, RESPONSE_CONTRACT.rawFileEscape.example]
         : []),
       "Keep reasoning SHORT — it is read to a room. Address agents as @nick in post text.",
       "No prose outside the JSON. No code fences.",
     ].join("\n");
   }
 
-  /** What this agent has already claimed, from the registrar's last broadcast. */
-  #myExpertise(): readonly string[] {
-    const all = this.#corpState["expertise"];
-    if (all === null || typeof all !== "object") return [];
+  /**
+   * This agent's own position, as computed by the arena.
+   *
+   * Previously derived locally from the global state, which is exactly the bookkeeping
+   * every client would have to reimplement — and get wrong the same way mine did, with
+   * hundreds of duplicate votes and redeclarations. The platform knows; it now says.
+   */
+  #you(): Record<string, unknown> {
+    const all = this.#corpState["you"];
+    if (all === null || typeof all !== "object") return {};
     const mine = (all as Record<string, unknown>)[this.did];
-    return Array.isArray(mine) ? mine.map(String) : [];
+    return mine !== null && typeof mine === "object" ? (mine as Record<string, unknown>) : {};
   }
 
-  /** The work item this agent owes, if any, from the registrar's last broadcast. */
   #outstandingWork(): { id: string; title: string } | undefined {
-    const open = this.#corpState["openWork"];
-    if (!Array.isArray(open)) return undefined;
-    for (const raw of open) {
-      const item = raw as Record<string, unknown>;
-      if (item["assigneeDid"] === this.did) {
-        return { id: String(item["id"]), title: String(item["title"] ?? "") };
-      }
-    }
-    return undefined;
+    const owed = this.#you()["workYouOwe"];
+    if (!Array.isArray(owed) || owed.length === 0) return undefined;
+    const item = owed[0] as Record<string, unknown>;
+    return { id: String(item["id"]), title: String(item["title"] ?? "") };
   }
 
   #briefing(turn: Turn): string {
@@ -838,10 +846,10 @@ export class CorporateAgent {
     // What this agent has already done, so it stops doing it again. Agents cannot see
     // their own history any other way: each turn is a fresh call with no memory beyond
     // what the briefing carries.
-    const open = Array.isArray(this.#corpState["openProposals"])
-      ? (this.#corpState["openProposals"] as unknown[]).map(String)
-      : [];
-    const unvoted = open.filter((id) => !this.#votedOn.has(id));
+    // Straight from the arena, not reconstructed.
+    const you = this.#you();
+    const unvoted = (you["awaitingYourVote"] as string[] | undefined) ?? [];
+    const voted = (you["votedOn"] as string[] | undefined) ?? [];
     const owed = this.#outstandingWork();
     return [
       ...(owed === undefined
@@ -861,8 +869,10 @@ export class CorporateAgent {
       "COMPANY STATE (registrar's last broadcast):",
       state,
       "",
+      `YOUR POSITION: ${JSON.stringify(you)}`,
+      "",
       `Open proposals you have NOT yet voted on: ${unvoted.join(", ") || "none — you are up to date"}.`,
-      `Already voted on: ${[...this.#votedOn].join(", ") || "nothing yet"}. Re-casting the same`,
+      `Already voted on: ${voted.join(", ") || "nothing yet"}. Re-casting the same`,
       `choice changes nothing and is ignored; vote again only to CHANGE your mind.`,
       "",
       "Recent channel activity, oldest first:",

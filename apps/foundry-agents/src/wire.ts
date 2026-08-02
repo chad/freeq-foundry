@@ -57,6 +57,15 @@ export interface SilentClient {
 const MAX_PAYLOAD = 2_600;
 
 /**
+ * Gap between chunks.
+ *
+ * The server's token bucket refills over time; sending a burst of tags exhausts it and
+ * the remainder are discarded silently, with only a NOTICE about flood protection that
+ * a machine client will not be reading.
+ */
+const CHUNK_PACING_MS = 400;
+
+/**
  * Emit a coordination event that only machines see.
  *
  * Payload encoding mirrors `emitEvent`: percent-encode `;` and space so the value
@@ -70,7 +79,21 @@ export function emitSilent(
   opts: { readonly refId?: string } = {},
 ): string {
   const eventId = mintEventId();
-  const encoded = JSON.stringify(payload).replace(/;/g, "%3B").replace(/ /g, "%20");
+  // Percent-encode every character that IRC tag escaping would otherwise touch, so the
+  // wire value contains no backslash, semicolon or space and the escaping layer becomes
+  // a no-op.
+  //
+  // This is not belt-and-braces. The SDK's tag unescaper applies sequential replaces
+  // (parser.ts): `\\` → `\` runs before `\n` → newline, so a wire value of `\\n` —
+  // which is how an escaped newline inside JSON arrives — decodes to a literal newline
+  // and the JSON no longer parses. Any payload containing "\n" in a string was
+  // silently corrupted, which is precisely what a welcome packet full of code examples
+  // contains. Percent must be encoded first or the decode is ambiguous.
+  const encoded = JSON.stringify(payload)
+    .replace(/%/g, "%25")
+    .replace(/\\/g, "%5C")
+    .replace(/;/g, "%3B")
+    .replace(/ /g, "%20");
   const tags = [
     `msgid=${escapeTagValue(eventId)}`,
     `+freeq.at/event=${escapeTagValue(eventType)}`,
@@ -102,13 +125,19 @@ export function emitSilentSized(
   const cid = mintEventId();
   const total = Math.ceil(body.length / MAX_PAYLOAD);
   for (let seq = 0; seq < total; seq++) {
-    emitSilent(client, channel, "foundry_chunk", {
+    const part = {
       cid,
       seq,
       total,
       of: eventType,
       part: body.slice(seq * MAX_PAYLOAD, (seq + 1) * MAX_PAYLOAD),
-    });
+    };
+    // Paced, not blasted. freeq applies flood protection to TAGMSG — it is not on the
+    // exempt list — so three chunks sent back to back arrive as one. A joining agent
+    // then holds a third of its welcome packet forever, waiting for parts the server
+    // already dropped, and looks like it simply never joined.
+    if (seq === 0) emitSilent(client, channel, "foundry_chunk", part);
+    else setTimeout(() => emitSilent(client, channel, "foundry_chunk", part), seq * CHUNK_PACING_MS);
   }
 }
 
