@@ -7,6 +7,12 @@
 # server's ghost window, launch, verify.
 set -euo pipefail
 
+# Load API keys from a local .env if present. Keys are never passed as flags — they would
+# land in shell history — and on a remote box there is no interactive shell to export
+# them from before a background run starts.
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -f "$ROOT_DIR/.env" ]; then set -a; . "$ROOT_DIR/.env"; set +a; fi
+
 RUN_ID="${1:-corp-$(date +%H%M%S)}"
 CHANNEL="${CHANNEL:-#foundry}"
 OWNER="${OWNER:-did:plc:4qsyxmnsblo4luuycm3572bq}"
