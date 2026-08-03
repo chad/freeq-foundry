@@ -18,8 +18,16 @@ for pkg in freeq-sdk-js freeq-bot-kit-js; do
   cp "$SRC/$pkg/package.json" "$ROOT/vendor/$pkg/package.json"
   echo "vendored $pkg"
 done
+# Strip scripts and devDependencies: these are prebuilt artifacts, not source. Left in
+# place, their `test` script makes `pnpm -r run test` recurse into a package with no
+# tests, which fails the whole CI run.
 node -e "
-const fs=require('fs'),p='$ROOT/vendor/freeq-bot-kit-js/package.json';
-const d=JSON.parse(fs.readFileSync(p));d.dependencies['@freeq/sdk']='file:../freeq-sdk-js';
-fs.writeFileSync(p,JSON.stringify(d,null,2)+'\n');"
+const fs=require('fs');
+for (const pkg of ['freeq-sdk-js','freeq-bot-kit-js']) {
+  const p='$ROOT/vendor/'+pkg+'/package.json';
+  const d=JSON.parse(fs.readFileSync(p));
+  delete d.scripts; delete d.devDependencies; d.private = true;
+  if (pkg === 'freeq-bot-kit-js') d.dependencies['@freeq/sdk']='file:../freeq-sdk-js';
+  fs.writeFileSync(p, JSON.stringify(d,null,2)+'\n');
+}"
 echo "done — commit vendor/ and run pnpm install"
