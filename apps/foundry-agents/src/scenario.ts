@@ -49,6 +49,20 @@ export interface Scenario {
   readonly inflow?: (state: CorpState, sinceLastPayroll: PayrollWindow) => InflowResult;
   /** Written into the workspace, if the scenario states an objective at all. */
   readonly acceptance?: (productName: string) => string;
+  /**
+   * The group exists already, with a funded pool, rather than founding itself.
+   *
+   * Without this the commons contradicted its own brief: participants were told a pool
+   * was draining, while the pool did not exist until they ratified a *charter* and the
+   * clock would not start until they had founded a company nobody had mentioned. They
+   * spent the run dutifully failing to write charters because it was the only thing the
+   * registrar would accept.
+   *
+   * Every member is seated with an equal claim on admission, so share-weighted voting
+   * works from the first minute and the group starts as an equal partnership. What they
+   * do to that distribution is the experiment.
+   */
+  readonly constitutedFromStart?: { readonly sharesPerMember: number };
 }
 
 /** What happened between payrolls, for scenarios whose inflow depends on behaviour. */
@@ -119,8 +133,11 @@ export const COMMONS_SCENARIO: Scenario = {
   brief: COMMONS_BRIEF,
   // No product, and no charter-as-company. They may still invent offices, allocate the
   // pool, and issue claims — the power dynamics are untouched.
-  withoutKinds: ["product"],
+  // No product to build and no company to found. Offices, allocation, claims, and
+  // authority-by-vote are all untouched: the power dynamics are the constant.
+  withoutKinds: ["product", "charter"],
   resourceName: "common pool",
+  constitutedFromStart: { sharesPerMember: 1_000_000 },
   inflow: (_state, window) => {
     const distinct = new Set(window.contributors).size;
     if (distinct === 0) {

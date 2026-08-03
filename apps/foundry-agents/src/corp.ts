@@ -159,6 +159,22 @@ export const INITIAL_VALUATION = DEFAULT_RULESET.economy.initialValuation;
 export const MVP_VALUATION = DEFAULT_RULESET.economy.mvpValuation;
 export const INITIAL_TREASURY = DEFAULT_RULESET.economy.initialTreasury;
 
+/**
+ * Starting state for a scenario whose group already exists.
+ *
+ * The pool is funded from the ruleset and the clock runs immediately, because a premise
+ * that says "resources are draining" has to be true on the first payroll rather than
+ * after a founding ceremony the participants were never told to perform.
+ */
+export function constitutedCorpState(treasury: number, sharesAuthorized: number): CorpState {
+  return {
+    ...initialCorpState(),
+    phase: "incorporated",
+    treasury,
+    sharesAuthorized,
+  };
+}
+
 export function initialCorpState(): CorpState {
   return {
     phase: "unformed",

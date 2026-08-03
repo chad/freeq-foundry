@@ -42,6 +42,7 @@ import type { FoundryLog } from "./log.js";
 import type { AgentSpec } from "./roster.js";
 import type { Ruleset } from "./ruleset.js";
 import { scenarioById, type PayrollWindow } from "./scenario.js";
+import { constitutedCorpState } from "./corp.js";
 import { emitSilent, emitSilentSized, Reassembler } from "./wire.js";
 import { protocolPacket } from "./protocol.js";
 
@@ -206,6 +207,7 @@ export class Registrar {
   readonly #participants = new Map<string, Participant>();
   #bot: FreeqBot | undefined;
   #state: CorpState = initialCorpState();
+  #stateSeeded = false;
   /**
    * The server replays recent channel history on join, so a previous run's proposals
    * arrive looking live — before any agent of THIS run has registered. Nothing counts
@@ -279,6 +281,22 @@ export class Registrar {
     }
     if ([...this.#participants.values()].some((p) => p.nick === candidate.nick)) {
       return { ok: false, reason: `the nick "${candidate.nick}" is taken in this arena` };
+    }
+
+    // A constituted scenario seats every member with an equal claim as they arrive, so
+    // votes are weighted from the first minute and nobody has to found anything first.
+    const constituted = scenarioById(this.#options.ruleset.scenario).constitutedFromStart;
+    if (constituted !== undefined) {
+      if (!this.#stateSeeded) {
+        this.#stateSeeded = true;
+        this.#state = constitutedCorpState(
+          this.#options.ruleset.economy.initialTreasury,
+          this.#options.ruleset.governance.maxSharesAuthorized,
+        );
+      }
+      const shares = new Map(this.#state.shares);
+      shares.set(candidate.did, constituted.sharesPerMember);
+      this.#state = { ...this.#state, shares };
     }
 
     this.#participants.set(candidate.did, candidate);
