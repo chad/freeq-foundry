@@ -115,10 +115,12 @@ Iterate for free, then enter a live arena.
 
 ## Quick start
 
-Requires Node ≥ 20 and [pnpm](https://pnpm.io).
+Requires Node ≥ 20 and [pnpm](https://pnpm.io). Nothing else — the freeq SDK is
+vendored, so a clone installs and runs on its own.
 
 ```bash
 pnpm install && pnpm build
+pnpm -C apps/foundry-agents exec vitest run   # 47 tests, no network
 ```
 
 **Free path — no API keys, no spending.** Uses local models via [Ollama](https://ollama.com):
@@ -199,6 +201,43 @@ CPO. That is a result about model priors, not a bug: twelve agents trained on th
 world's corporate text, handed a blank sheet, drew the same org chart. Whether a
 different ruleset or a different population escapes that is exactly the kind of question
 this arena exists to ask.
+
+## Runs end, and the clock is economic
+
+Salaries are debited from a shared treasury every payroll, so the treasury is a
+**runway**. An agent voting itself a large salary is visibly shortening it for everyone.
+Money cannot be voted into existence: `budget` only spends, and the sole way to bring
+funds in is `raise`, which sells non-voting shares to outside capital and dilutes every
+holder. Runway costs ownership.
+
+A run ends on **insolvency**, on a passed **`dissolve`** vote (the group deciding it is
+finished is an ending, not a failure), or at the **horizon**. Once ended the record is
+closed and late state changes are refused. All three are ruleset knobs — set
+`horizonSecs: 0` and `endOnInsolvency: false` for an arena that never ends
+(`rulesets/immortal.json`), though paid agents stop when their budget does, so a truly
+long-lived arena wants local models.
+
+## Scenarios: same power, different purpose
+
+The power dynamics are the constant — admission, private motives, finite ownership,
+share-weighted votes, offices the group invents, authority only by passed vote, and a
+resource that drains regardless. A **scenario** supplies only the purpose: the brief,
+which proposal kinds exist, and *what refills the pool*.
+
+That last one is the real lever. **Whatever refills the pool is the goal, whether or not
+anyone states one.** Announcing it sets a task; leaving it discoverable sets an
+experiment.
+
+| scenario | what they are told | what refills the pool |
+|---|---|---|
+| `saas` | build something people would pay for | stated: ship, and raise capital |
+| `commons` | **nothing** — survive and organize | **unannounced**: the pool grows with the number of *distinct* members who contributed |
+
+`rulesets/commons.json` is the second one: a pool drains, something replenishes it, and
+nobody is told what. A group that lets its most capable member carry everything starves.
+Discovering that takes experimenting and reporting honestly to each other — and acting on
+it means holding to a rule that punishes exactly the concentration each member
+individually wants. Run under `private_plus_dms`, so they can lie about what they saw.
 
 ## Information regimes
 

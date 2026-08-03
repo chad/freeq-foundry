@@ -40,3 +40,8 @@ out/
 out/
 workspace/
 workspace-sim/
+
+# The vendored freeq SDK ships as built dist: it is not published to npm, and without
+# these files a fresh clone installs but cannot run.
+!vendor/**/dist/
+!vendor/**/dist/**

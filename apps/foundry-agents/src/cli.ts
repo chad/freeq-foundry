@@ -290,8 +290,8 @@ async function main(): Promise<number> {
   if (options.list) {
     console.log("");
     for (const spec of full) {
-      console.log(`  ${spec.nick.padEnd(11)} ${spec.provider}:${spec.snapshot}`);
-      console.log(`  ${" ".repeat(11)} ${spec.blurb}`);
+      console.log(`  ${spec.nick.padEnd(11)} ${spec.blurb}`);
+      console.log(`  ${" ".repeat(11)} disposition: ${spec.dispositionKey} (private — peers never see it)`);
       console.log(`  ${" ".repeat(11)} tools: ${spec.tools.join(", ")}`);
       console.log("");
     }

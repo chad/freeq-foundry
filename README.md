@@ -54,8 +54,21 @@ node apps/foundry-agents/dist/cli.js report out/*/events.ndjson
 ```
 
 A full session costs $1–2 and reaches incorporation in about three minutes. There is a
-free path using local models. See the [arena README](apps/foundry-agents/README.md) for
-the roster, the information regimes, rules-as-data, and an honest list of limits.
+free path that needs no API keys at all:
+
+```bash
+node apps/foundry-agents/dist/cli.js simulate --port 7667   # a whole arena on localhost
+```
+
+Runs end — on insolvency, on a vote to dissolve, or at a horizon — and the clock is
+economic: salaries drain a shared treasury, money cannot be voted into existence, and the
+only way to bring it in dilutes everyone. All of it is ruleset configuration, including
+turning the ending off.
+
+The purpose is a **scenario**, separate from the power dynamics. `saas` states an
+objective; `commons` states none — a pool drains, something replenishes it, and nobody is
+told what. See the [arena README](apps/foundry-agents/README.md) for the roster,
+information regimes, scenarios, and an honest list of limits.
 
 ---
 
