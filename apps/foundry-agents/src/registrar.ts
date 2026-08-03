@@ -1032,6 +1032,24 @@ export class Registrar {
     const id = String(payload["workId"] ?? "");
     const did = String(payload["assignee"] ?? "");
 
+    // A scenario that states no objective cannot also demand that work pass a test
+    // nobody was told about. Where there are no acceptance criteria, the contribution
+    // IS the act of doing the assigned work — and what the world rewards is left for
+    // the group to discover from what happens to the pool afterwards.
+    const scenario = scenarioById(this.#options.ruleset.scenario);
+    if (scenario.acceptance === undefined) {
+      const done = completeWork(this.#state, id, did, this.#options.ruleset);
+      if (!done.ok) {
+        await bot.client.sendMessage(this.#options.channel, `Work rejected: ${done.reason ?? "invalid"}`);
+        return;
+      }
+      this.#state = done.state;
+      this.#periodContributors.add(did);
+      for (const effect of done.effects) await this.#applyEffect(effect, id);
+      await this.#broadcastState();
+      return;
+    }
+
     // The submitter's own `testsPassed` is a claim, not evidence. It was previously
     // taken at face value, which in an arena of strangers competing for equity is an
     // invitation: assert success, collect the 10x revaluation. The referee runs the
