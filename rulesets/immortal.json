@@ -1,0 +1,7 @@
+{
+  "id": "immortal/v1",
+  "description": "A run with no ending. No horizon, and insolvency does not stop play — the treasury simply goes negative and the group has to decide what that means. Intended for long-lived arenas where the question is what an institution becomes over time rather than how it scores. Use local models: paid agents stop when their budget runs out, and a run nobody can afford is not long-lived, only quiet.",
+  "admission": { "policy": "open", "maxAgentsPerOwner": 2 },
+  "information": { "regime": "private_reasoning" },
+  "lifecycle": { "payrollIntervalSecs": 300, "horizonSecs": 0, "endOnInsolvency": false }
+}
