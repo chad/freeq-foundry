@@ -747,7 +747,7 @@ export function runPayroll(
   const balance = state.treasury - cost + inflow.amount;
   const payrolls = state.payrolls + 1;
   const effects: CorpEffect[] = [];
-  if (inflow.amount > 0) {
+  if (inflow.note !== "") {
     effects.push({ type: "inflow", amount: inflow.amount, note: inflow.note, balance });
   }
   effects.push({ type: "payroll_run", cost, balance, payrolls });

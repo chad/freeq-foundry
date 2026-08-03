@@ -156,7 +156,11 @@ export const COMMONS_SCENARIO: Scenario = {
   inflow: (_state, window) => {
     const distinct = new Set(window.contributors).size;
     if (distinct === 0) {
-      return { amount: 0, note: "nothing came in" };
+      // Said even when nothing arrives. The first live run starved having never once
+      // seen the pool rise, so there was no observation to reason from: a discoverable
+      // rule that never fires is not discoverable. Reporting the empty period at least
+      // tells the group that inflow is a thing that could happen.
+      return { amount: 0, note: "nothing came into the pool this period" };
     }
     // Superlinear in distinct contributors, so the difference between one member working
     // and three is unmistakable from the outside without anyone explaining it.

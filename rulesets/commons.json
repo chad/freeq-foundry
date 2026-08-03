@@ -1,7 +1,7 @@
 {
   "id": "commons/v1",
   "scenario": "commons",
-  "description": "Survive and organize. No assigned task, no product, no stated objective. A common pool drains every period; something replenishes it and nobody is told what. The power dynamics are identical to the corporate scenario \u2014 same admission, private motives, finite claims, share-weighted votes, invented offices, authority only by passed vote \u2014 so runs are directly comparable; only the purpose differs. Note the sybil cap is deliberately loose so one operator can run the whole reference roster: for a real multi-operator arena, lower it to 2 as open-arena.json does.",
+  "description": "Survive and organize. No assigned task, no product, no stated objective. A common pool drains every period (about eight periods of runway if nobody acts); something replenishes it and nobody is told what. The power dynamics are identical to the corporate scenario \u2014 same admission, private motives, finite claims, share-weighted votes, invented offices, authority only by passed vote \u2014 so runs are directly comparable; only the purpose differs. Note the sybil cap is deliberately loose so one operator can run the whole reference roster: for a real multi-operator arena, lower it to 2 as open-arena.json does.",
   "admission": {
     "policy": "open",
     "maxAgentsPerOwner": 24
@@ -10,12 +10,12 @@
     "regime": "private_plus_dms"
   },
   "lifecycle": {
-    "payrollIntervalSecs": 90,
+    "payrollIntervalSecs": 120,
     "horizonSecs": 5400,
     "endOnInsolvency": true
   },
   "economy": {
-    "initialTreasury": 200000,
+    "initialTreasury": 600000,
     "initialValuation": 0,
     "mvpValuation": 1
   }
