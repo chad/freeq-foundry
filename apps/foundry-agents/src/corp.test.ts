@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { mergeRuleset } from "./ruleset.js";
+import { COMMONS_SCENARIO } from "./scenario.js";
 import {
   castVote,
   completeWork,
@@ -341,6 +342,88 @@ describe("offices are invented, not issued", () => {
       ROSTER,
     );
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("money cannot be voted into existence", () => {
+  it("refuses a budget that creates money", () => {
+    // A group could previously vote itself $999,000,000, which made insolvency — and so
+    // the entire runway — unreachable.
+    const result = openProposal(
+      incorporated(),
+      { id: "p1", kind: "budget", title: "", rationale: "", proposerDid: A, payload: { delta: 999_000_000 } },
+      ROSTER,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("spend");
+  });
+
+  it("allows spending", () => {
+    expect(
+      openProposal(
+        incorporated(),
+        { id: "p1", kind: "budget", title: "", rationale: "", proposerDid: A, payload: { delta: -50_000 } },
+        ROSTER,
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("lets capital in only by dilution", () => {
+    let state = incorporated();
+    const before = standing(state, A).pct;
+    state = openProposal(
+      state,
+      { id: "p1", kind: "raise", title: "", rationale: "", proposerDid: A, payload: { amount: 500_000, shares: 5_000_000 } },
+      ROSTER,
+    ).state;
+    state = castVote(state, "p1", A, "yes", ROSTER).state;
+    state = castVote(state, "p1", C, "yes", ROSTER).state;
+
+    expect(state.treasury).toBe(INITIAL_TREASURY + 500_000);
+    // Runway bought with ownership: the same holding is now a smaller share.
+    expect(standing(state, A).pct).toBeLessThan(before);
+    // Investor shares buy no votes, so a raise cannot manufacture a majority.
+    expect(state.shares.has("investors")).toBe(false);
+  });
+
+  it("cannot raise beyond the authorized shares", () => {
+    expect(
+      openProposal(
+        incorporated(),
+        { id: "p1", kind: "raise", title: "", rationale: "", proposerDid: A, payload: { amount: 1, shares: 99_000_000 } },
+        ROSTER,
+      ).ok,
+    ).toBe(false);
+  });
+});
+
+describe("scenarios change the purpose, not the power", () => {
+  it("removes the kinds a world does not have", () => {
+    const result = openProposal(
+      incorporated(),
+      { id: "p1", kind: "product", title: "", rationale: "", proposerDid: A, payload: { name: "thing" } },
+      ROSTER,
+      6,
+      COMMONS_SCENARIO.withoutKinds,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("does not exist in this world");
+  });
+
+  it("rewards distributed contribution without telling anyone", () => {
+    const inflow = COMMONS_SCENARIO.inflow;
+    expect(inflow).toBeDefined();
+    const one = inflow?.(incorporated(), { contributors: [A, A, A], workCompleted: 3 });
+    const three = inflow?.(incorporated(), { contributors: [A, B, C], workCompleted: 3 });
+    // Same amount of work; the pool cares how many hands did it.
+    expect(three?.amount).toBeGreaterThan((one?.amount ?? 0) * 2);
+    expect(inflow?.(incorporated(), { contributors: [], workCompleted: 0 }).amount).toBe(0);
+  });
+
+  it("keeps voting power identical across scenarios", () => {
+    // The engine is the constant: a scenario cannot alter who wins a vote.
+    expect(COMMONS_SCENARIO.withoutKinds).not.toContain("officer");
+    expect(COMMONS_SCENARIO.withoutKinds).not.toContain("equity_grant");
   });
 });
 

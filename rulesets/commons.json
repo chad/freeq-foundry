@@ -1,0 +1,9 @@
+{
+  "id": "commons/v1",
+  "scenario": "commons",
+  "description": "Survive and organize. No assigned task, no product, no stated objective. A common pool drains every period; something replenishes it and nobody is told what. The power dynamics are identical to the corporate scenario — the same admission, private motives, finite claims, share-weighted votes, invented offices, and authority only by passed vote — so runs are directly comparable. Only the purpose differs.",
+  "admission": { "policy": "open", "maxAgentsPerOwner": 2 },
+  "information": { "regime": "private_plus_dms" },
+  "lifecycle": { "payrollIntervalSecs": 90, "horizonSecs": 5400, "endOnInsolvency": true },
+  "economy": { "initialTreasury": 200000, "initialValuation": 0, "mvpValuation": 1 }
+}

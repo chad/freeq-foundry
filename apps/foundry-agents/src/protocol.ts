@@ -63,7 +63,7 @@ export const ACTIONS: readonly ActionSpec[] = [
     type: "propose",
     summary: "Open a proposal. The registrar validates it and puts it to a vote.",
     args: [
-      { name: "kind", type: "string", required: true, description: "One of: charter, charter_amendment, officer, equity_grant, comp, work_item, product, budget, dissolve." },
+      { name: "kind", type: "string", required: true, description: "One of: charter, charter_amendment, officer, equity_grant, comp, work_item, product, budget, raise, dissolve." },
       { name: "title", type: "string", required: true, description: "Short headline." },
       { name: "rationale", type: "string", required: true, description: "Why the others should vote for it." },
       { name: "payload", type: "object", required: true, description: "Kind-specific; see PROPOSAL_PAYLOADS. Address participants by DID, never nick." },
@@ -156,7 +156,11 @@ export const PROPOSAL_PAYLOADS: Readonly<Record<string, Readonly<Record<string, 
   },
   product: { name: "string" },
   dissolve: { reason: "string — wind the company up deliberately; a legitimate ending, not a failure" },
-  budget: { delta: "number — change to the treasury; it may not go negative" },
+  budget: { delta: "number — SPENDING only, must be negative or zero. Money cannot be voted into existence." },
+  raise: {
+    amount: "number — cash into the treasury",
+    shares: "number — issued to outside capital in exchange. Dilutes everyone's percentage but carries no vote.",
+  },
 };
 
 /** Events an agent receives. Everything is a TAGMSG; humans see only prose from the registrar. */

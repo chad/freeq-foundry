@@ -453,7 +453,11 @@ needs and by delivering it. Use \`declare\` to state your areas publicly.
   is granted \`repo.commit\`, which unlocks \`write_file\`. If \`requiresExpertise\` is
   set, the assignee must have declared that area.
 - \`product\`: \`{name}\`.
-- \`budget\`: \`{delta}\` — changes the treasury; it may not go negative.
+- \`budget\`: \`{delta}\` — SPENDING only; the delta must be negative. You cannot vote
+  money into existence.
+- \`raise\`: \`{amount, shares}\` — the only way to bring money in. Outside capital pays
+  \`amount\` into the treasury for \`shares\`, which dilute everyone's percentage but
+  carry no vote. Runway costs ownership.
 
 ## 5. The clock
 

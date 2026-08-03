@@ -783,6 +783,8 @@ export class CorporateAgent {
     return [
       FOUNDER_BRIEF,
       "",
+      String((this.#welcome["arena"] as Record<string, unknown> | undefined)?.["brief"] ?? ""),
+      "",
       `You are @${this.spec.nick}. ${this.spec.blurb}`,
       `Your DID: ${this.did}`,
       "",

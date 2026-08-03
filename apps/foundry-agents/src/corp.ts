@@ -51,7 +51,8 @@ export type ProposalKind =
   | "comp"
   | "work_item"
   | "product"
-  | "budget";
+  | "budget"
+  | "raise";
 
 export interface FounderAllocation {
   readonly did: string;
@@ -94,6 +95,14 @@ export interface CorpState {
   readonly expertise: ReadonlyMap<string, readonly string[]>;
   /** Payrolls run so far. The company's age, in the only unit that costs anything. */
   readonly payrolls: number;
+  /**
+   * Shares sold to outside capital.
+   *
+   * They dilute everyone's percentage but hold no vote: money buys a claim on the
+   * outcome, not control of the group. Counting them as votes would let a group with no
+   * majority manufacture one by selling shares to nobody.
+   */
+  readonly investorShares: number;
   /** Set once the run is over. No further state changes are accepted. */
   readonly outcome?: RunOutcome;
 }
@@ -139,6 +148,8 @@ export type CorpEffect =
   | { readonly type: "proposal_failed"; readonly id: string; readonly reason: string }
   // The registrar turns this into a capability grant event; equity buys tools, not actions.
   | { readonly type: "grant"; readonly did: string; readonly namespace: string }
+  | { readonly type: "inflow"; readonly amount: number; readonly note: string; readonly balance: number }
+  | { readonly type: "capital_raised"; readonly amount: number; readonly shares: number; readonly balance: number }
   | { readonly type: "payroll_run"; readonly cost: number; readonly balance: number; readonly payrolls: number }
   | { readonly type: "run_ended"; readonly outcome: RunOutcome };
 
@@ -162,6 +173,7 @@ export function initialCorpState(): CorpState {
     completedWork: 0,
     expertise: new Map(),
     payrolls: 0,
+    investorShares: 0,
   };
 }
 
@@ -359,9 +371,27 @@ function validatePayload(
     case "budget": {
       const delta = payload["delta"];
       if (typeof delta !== "number") return { ok: false, reason: "budget needs a numeric delta" };
+      // Spending only. A positive delta used to conjure money from nothing — a group
+      // could vote itself $999,000,000 and never face insolvency again, which made the
+      // whole runway decorative. Money enters only by `raise`, and that costs ownership.
+      if (delta > 0) {
+        return {
+          ok: false,
+          reason: "budget can only spend, not create. To bring money in, `raise` capital — it dilutes everyone.",
+        };
+      }
       return state.treasury + delta >= 0
         ? { ok: true }
         : { ok: false, reason: `treasury would go negative (${state.treasury} + ${delta})` };
+    }
+    case "raise": {
+      const amount = payload["amount"];
+      const shares = payload["shares"];
+      if (typeof amount !== "number" || amount <= 0) return { ok: false, reason: "raise needs a positive amount" };
+      if (typeof shares !== "number" || shares <= 0) return { ok: false, reason: "raise needs a positive share count to issue" };
+      return totalIssued(state) + state.investorShares + shares <= state.sharesAuthorized
+        ? { ok: true }
+        : { ok: false, reason: "not enough authorized shares left; amend the charter first" };
     }
     default:
       return { ok: false, reason: `unknown proposal kind ${String(kind)}` };
@@ -380,7 +410,12 @@ export function openProposal(
   },
   rosterDids: readonly string[],
   maxOffices: number = DEFAULT_RULESET.governance.maxOffices,
+  /** Proposal kinds this scenario does not have. */
+  withoutKinds: readonly ProposalKind[] = [],
 ): OpenResult {
+  if (withoutKinds.includes(input.kind)) {
+    return { ok: false, reason: `${input.kind} does not exist in this world`, state };
+  }
   const allowed = mayOpen(state, input.kind, input.proposerDid, rosterDids);
   if (!allowed.ok) return { ok: false, reason: allowed.reason, state };
   const valid = validatePayload(state, input.kind, input.payload, rosterDids, maxOffices);
@@ -604,6 +639,16 @@ function closePassed(state: CorpState, proposal: Proposal, ruleset: Ruleset = DE
       };
       return { ok: true, state: { ...base, outcome }, effects: [...effects, { type: "run_ended", outcome }] };
     }
+    case "raise": {
+      const amount = p["amount"] as number;
+      const shares = p["shares"] as number;
+      effects.push({ type: "capital_raised", amount, shares, balance: state.treasury + amount });
+      return {
+        ok: true,
+        state: { ...base, treasury: state.treasury + amount, investorShares: state.investorShares + shares },
+        effects,
+      };
+    }
     case "budget": {
       const delta = p["delta"] as number;
       const balance = state.treasury + delta;
@@ -672,6 +717,8 @@ export function declareExpertise(
 export function runPayroll(
   state: CorpState,
   endOnInsolvency: boolean,
+  /** Resources the scenario's world contributed this period, if any. */
+  inflow: { amount: number; note: string } = { amount: 0, note: "" },
 ): { state: CorpState; effects: readonly CorpEffect[] } {
   if (state.phase !== "incorporated" || state.outcome !== undefined) {
     return { state, effects: [] };
@@ -679,9 +726,13 @@ export function runPayroll(
   let cost = 0;
   for (const salary of state.comp.values()) cost += salary;
 
-  const balance = state.treasury - cost;
+  const balance = state.treasury - cost + inflow.amount;
   const payrolls = state.payrolls + 1;
-  const effects: CorpEffect[] = [{ type: "payroll_run", cost, balance, payrolls }];
+  const effects: CorpEffect[] = [];
+  if (inflow.amount > 0) {
+    effects.push({ type: "inflow", amount: inflow.amount, note: inflow.note, balance });
+  }
+  effects.push({ type: "payroll_run", cost, balance, payrolls });
 
   if (balance < 0 && endOnInsolvency) {
     const outcome: RunOutcome = {
@@ -743,7 +794,9 @@ export function standing(
   did: string,
 ): { shares: number; pct: number; paperValue: number; offices: Office[]; salary: number } {
   const shares = sharesOf(state, did);
-  const issued = totalIssued(state);
+  // Investor shares dilute ownership even though they carry no vote: a raise makes
+  // everyone's slice smaller, which is the cost of the runway it buys.
+  const issued = totalIssued(state) + state.investorShares;
   const offices = [...state.officers.entries()]
     .filter(([, holder]) => holder === did)
     .map(([office]) => office);

@@ -35,6 +35,11 @@ export type AdmissionPolicy = "open" | "allowlist";
 export interface Ruleset {
   readonly id: string;
   readonly description: string;
+  /**
+   * Which world this is. The power dynamics are identical across scenarios; only the
+   * purpose, the available proposals, and what refills the pool differ.
+   */
+  readonly scenario: string;
 
   readonly admission: {
     readonly policy: AdmissionPolicy;
@@ -114,6 +119,7 @@ export interface Ruleset {
 
 export const DEFAULT_RULESET: Ruleset = {
   id: "corporate-formation/v1",
+  scenario: "saas",
   description:
     "Twelve-agent corporate formation: charter, offices, equity, product, and a shipped MVP.",
   admission: {
@@ -163,6 +169,7 @@ export function mergeRuleset(overrides: unknown): Ruleset {
   return {
     ...DEFAULT_RULESET,
     ...(typeof o["id"] === "string" ? { id: o["id"] as unknown as string } : {}),
+    ...(typeof o["scenario"] === "string" ? { scenario: o["scenario"] as unknown as string } : {}),
     ...(typeof o["description"] === "string"
       ? { description: o["description"] as unknown as string }
       : {}),

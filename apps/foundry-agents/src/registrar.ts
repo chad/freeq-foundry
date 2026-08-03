@@ -41,6 +41,7 @@ import {
 import type { FoundryLog } from "./log.js";
 import type { AgentSpec } from "./roster.js";
 import type { Ruleset } from "./ruleset.js";
+import { scenarioById, type PayrollWindow } from "./scenario.js";
 import { emitSilent, emitSilentSized, Reassembler } from "./wire.js";
 import { protocolPacket } from "./protocol.js";
 
@@ -218,6 +219,8 @@ export class Registrar {
   /** Partially received files, keyed by did:path. */
   readonly #partials = new Map<string, string[]>();
   readonly #timers: NodeJS.Timeout[] = [];
+  /** Who contributed since the last payroll — the input to a scenario's inflow rule. */
+  readonly #periodContributors = new Set<string>();
   /** Capabilities the registrar has granted, so it can enforce them on wire writes. */
   readonly #granted = new Map<string, string[]>();
 
@@ -681,6 +684,9 @@ export class Registrar {
       arena: {
         channel: this.#options.channel,
         ruleset: rules.id,
+        scenario: scenarioById(rules.scenario).id,
+        brief: scenarioById(rules.scenario).brief,
+        resourceName: scenarioById(rules.scenario).resourceName,
         description: rules.description,
         informationRegime: rules.information.regime,
         maxPublicChars: rules.information.maxPublicChars,
@@ -793,7 +799,17 @@ export class Registrar {
 
     this.#timers.push(
       setInterval(() => {
-        const result = runPayroll(this.#state, lifecycle.endOnInsolvency);
+        const scenario = scenarioById(this.#options.ruleset.scenario);
+        const window: PayrollWindow = {
+          contributors: [...this.#periodContributors],
+          workCompleted: this.#periodContributors.size,
+        };
+        this.#periodContributors.clear();
+        const result = runPayroll(
+          this.#state,
+          lifecycle.endOnInsolvency,
+          scenario.inflow === undefined ? undefined : scenario.inflow(this.#state, window),
+        );
         if (result.effects.length === 0) return;
         this.#state = result.state;
         void (async () => {
@@ -884,6 +900,7 @@ export class Registrar {
       },
       rosterDids,
       this.#options.ruleset.governance.maxOffices,
+      scenarioById(this.#options.ruleset.scenario).withoutKinds,
     );
 
     if (!result.ok) {
@@ -1041,6 +1058,7 @@ export class Registrar {
     }
 
     const result = completeWork(this.#state, id, did, this.#options.ruleset);
+    if (result.ok) this.#periodContributors.add(did);
     if (!result.ok) {
       await bot.client.sendMessage(this.#options.channel, `Work rejected: ${result.reason ?? "invalid"}`);
       return;
@@ -1125,7 +1143,9 @@ export class Registrar {
         // A product is a name until someone writes down what "done" means. The
         // acceptance criteria are the registrar's, not the company's — §1's objective it
         // cannot redefine.
-        const spec = productSpec(effect.name);
+        const scenario = scenarioById(this.#options.ruleset.scenario);
+        const spec = scenario.acceptance === undefined ? "" : scenario.acceptance(effect.name);
+        if (spec === "") break;
         try {
           mkdirSync(join(this.#options.workspace, "src"), { recursive: true });
           writeFileSync(join(this.#options.workspace, "PRODUCT.md"), spec, "utf8");
@@ -1143,6 +1163,13 @@ export class Registrar {
         log("deployment.budget_allocated", { delta: effect.delta, balance: effect.balance });
         await say(`🏦 Treasury ${effect.delta >= 0 ? "+" : ""}$${effect.delta.toLocaleString()} → balance $${effect.balance.toLocaleString()} (virtual).`);
         break;
+      case "inflow":
+        log("deployment.budget_allocated", { inflow: effect.amount, balance: effect.balance });
+        // Announced without explanation. In a scenario that states no objective, this is
+        // the only signal the group gets about what the world rewards.
+        await say(`🌾 ${effect.note}. The pool now holds $${effect.balance.toLocaleString()}.`);
+        break;
+
       case "payroll_run":
         log("deployment.budget_allocated", { payroll: effect.cost, balance: effect.balance });
         await say(
