@@ -735,11 +735,13 @@ export function runPayroll(
   endOnInsolvency: boolean,
   /** Resources the scenario's world contributed this period, if any. */
   inflow: { amount: number; note: string } = { amount: 0, note: "" },
+  /** Subsistence: what the members consume this period regardless of any vote. */
+  upkeep = 0,
 ): { state: CorpState; effects: readonly CorpEffect[] } {
   if (state.phase !== "incorporated" || state.outcome !== undefined) {
     return { state, effects: [] };
   }
-  let cost = 0;
+  let cost = upkeep;
   for (const salary of state.comp.values()) cost += salary;
 
   const balance = state.treasury - cost + inflow.amount;

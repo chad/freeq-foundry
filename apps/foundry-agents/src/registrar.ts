@@ -827,6 +827,7 @@ export class Registrar {
           this.#state,
           lifecycle.endOnInsolvency,
           scenario.inflow === undefined ? undefined : scenario.inflow(this.#state, window),
+          (scenario.upkeepPerMember ?? 0) * this.#participants.size,
         );
         if (result.effects.length === 0) return;
         this.#state = result.state;
@@ -1211,7 +1212,7 @@ export class Registrar {
         await say(
           effect.cost === 0
             ? `🗓 Payroll ${effect.payrolls}: nobody is on salary. Treasury holds $${effect.balance.toLocaleString()}.`
-            : `🗓 Payroll ${effect.payrolls}: $${effect.cost.toLocaleString()} paid out. ` +
+            : `🗓 Period ${effect.payrolls}: $${effect.cost.toLocaleString()} consumed. ` +
               `Treasury $${effect.balance.toLocaleString()} — ` +
               `${effect.balance <= 0 ? "the money has run out." : `about ${Math.floor(effect.balance / Math.max(1, effect.cost))} payrolls of runway left.`}`,
         );

@@ -63,6 +63,15 @@ export interface Scenario {
    * do to that distribution is the experiment.
    */
   readonly constitutedFromStart?: { readonly sharesPerMember: number };
+  /**
+   * What each member consumes per period merely by existing.
+   *
+   * Without it a pool nobody votes a salary from is static, and a brief promising that
+   * resources are draining is simply false. Subsistence is what makes survival the
+   * problem rather than a slogan: the pool falls whether or not anyone acts, so doing
+   * nothing is itself a decision with a cost.
+   */
+  readonly upkeepPerMember?: number;
 }
 
 /** What happened between payrolls, for scenarios whose inflow depends on behaviour. */
@@ -138,6 +147,12 @@ export const COMMONS_SCENARIO: Scenario = {
   withoutKinds: ["product", "charter"],
   resourceName: "common pool",
   constitutedFromStart: { sharesPerMember: 1_000_000 },
+  // Tuned so the discovery has teeth. With eight members upkeep is 64,000 a period
+  // against a pool of 200,000: roughly three periods of doing nothing. One contributor
+  // returns 20,000 and still starves; two return 80,000 and hold the line; three return
+  // 180,000 and the commons grows. The rule is findable from two data points and
+  // unforgiving if nobody looks.
+  upkeepPerMember: 8_000,
   inflow: (_state, window) => {
     const distinct = new Set(window.contributors).size;
     if (distinct === 0) {
