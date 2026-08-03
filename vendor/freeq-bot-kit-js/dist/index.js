@@ -1,0 +1,39 @@
+/**
+ * @freeq/bot-kit — on-disk persistence + announce-sequence orchestration for
+ * freeq bots, on top of {@link https://www.npmjs.com/package/@freeq/sdk @freeq/sdk}.
+ *
+ * Usage:
+ *   const bot = await FreeqBot.create({ name, ownerDid, nick, url });
+ *   bot.on('message', (ch, msg) => bot.client.sendMessage(ch, `echo: ${msg.text}`));
+ *   await bot.start();
+ *
+ *   process.once('SIGINT',  () => bot.stop('SIGINT').then(()  => process.exit(0)));
+ *   process.once('SIGTERM', () => bot.stop('SIGTERM').then(() => process.exit(0)));
+ */
+export { FreeqBot } from "./bot.js";
+// Default mention matcher — exported so bot authors can compose with it
+// (e.g. wrap it with extra logic) rather than reimplementing.
+export { matchMention } from "./mention.js";
+// Re-export the SDK surface that bot consumers commonly need, so they can
+// depend on @freeq/bot-kit alone. (Bots that need anything not re-exported
+// here can still depend on @freeq/sdk directly.)
+export { FreeqClient, fetchProfile } from "@freeq/sdk";
+// Low-level helpers — for callers that want to read identity/cert state
+// (e.g. a CLI's `status` command) without constructing a FreeqBot.
+export { loadOrCreateIdentity } from "./identity.js";
+export { loadDelegation, loadOrMintDelegation, buildDelegation, signDelegation, canonicalizeForSigning, } from "./delegation.js";
+// Daemon CLI scaffold — Commander-based launch/stop/status/doctor/tail
+// for long-running freeq bot daemons. Caller provides runDaemon + paths;
+// bot-kit handles pid files, --detach forking, signal wiring, and the
+// built-in identity/delegation/server doctor checks.
+export { createDaemonCLI, readPidIfAlive } from "./daemon-cli.js";
+// Hot-reloadable, DID-keyed map. Backs allowlists, banlists, roles,
+// tiers, friends — same primitive, different wiring. See README.
+export { createDidMap } from "./did-map.js";
+// Sender-DID resolver — also surfaced as bot.resolveSenderDid() on
+// FreeqBot. Standalone export is for bots that don't use the wrapper.
+export { createDidResolver } from "./did-resolver.js";
+// Rate-limit + cycle-detection gate. Caller-owned persistence via
+// optional load/save callbacks (same pattern as createDidMap).
+export { createTurnGate } from "./turn-gate.js";
+//# sourceMappingURL=index.js.map
