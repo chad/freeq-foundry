@@ -26,8 +26,8 @@
     "@freeq-foundry/projections": "workspace:*",
     "@freeq-foundry/protocol": "workspace:*",
     "@freeq-foundry/sandbox": "workspace:*",
-    "@freeq/bot-kit": "file:../../../freeq/freeq-bot-kit-js",
-    "@freeq/sdk": "file:../../../freeq/freeq-sdk-js"
+    "@freeq/bot-kit": "file:../../vendor/freeq-bot-kit-js",
+    "@freeq/sdk": "file:../../vendor/freeq-sdk-js"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
